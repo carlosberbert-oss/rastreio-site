@@ -88,6 +88,39 @@
   .intro-bar i { display: block; height: 100%; width: 40%; border-radius: 980px; background: linear-gradient(90deg, var(--blue-400), var(--blue-600)); transform: translateX(-110%); animation: introLoad 1.25s var(--ease-out) .75s forwards; }
   @keyframes introLoad { to { transform: translateX(260%); } }
 
+  /* caminhão atravessando a abertura */
+  .intro-road {
+    position: relative;
+    width: 240px;
+    height: 50px;
+    overflow: hidden;
+    opacity: 0;
+    animation: introFade .6s var(--ease) .55s forwards;
+  }
+  .intro-road::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 6px;
+    height: 2px;
+    background: repeating-linear-gradient(90deg, rgba(31,92,153,.22) 0 14px, transparent 14px 26px);
+    background-size: 26px 2px;
+    animation: roadMove .5s linear infinite;
+  }
+  .intro-truck {
+    bottom: 8px;
+    left: -80px;
+    transform: none;
+    animation: introDrive 2.1s var(--ease-out) .6s forwards, truckBobY .42s ease-in-out infinite;
+  }
+  @keyframes introDrive {
+    0%   { left: -80px; }
+    100% { left: 240px; }
+  }
+  @keyframes truckBobY {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1.5px); }
+  }
+
   .container {
     position: relative; z-index: 1;
     max-width: 720px;
@@ -392,22 +425,94 @@
   }
   .error-card.visible { display: block; animation: pop 320ms var(--ease-out); }
 
-  /* Spinner */
+  /* Loading — caminhão de entrega andando */
   .loading {
     display: none;
     text-align: center;
-    padding: 36px 0;
+    padding: 30px 0 36px;
   }
   .loading.visible { display: block; animation: pop 320ms var(--ease-out); }
-  .spinner {
-    width: 30px; height: 30px;
-    border: 2.5px solid var(--divider);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    margin: 0 auto 14px;
-    animation: spin 0.8s linear infinite;
+
+  .road {
+    position: relative;
+    width: 200px;
+    height: 56px;
+    margin: 0 auto 18px;
+    overflow: hidden;
   }
+  /* linha da estrada com tracejado correndo */
+  .road::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 6px;
+    height: 2px;
+    background: repeating-linear-gradient(90deg, var(--divider) 0 14px, transparent 14px 26px);
+    background-size: 26px 2px;
+    animation: roadMove 0.5s linear infinite;
+  }
+  @keyframes roadMove { to { background-position: -26px 0; } }
+
+  .truck {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    transform: translateX(-50%);
+    width: 64px; height: 36px;
+    animation: truckBob 0.42s ease-in-out infinite;
+  }
+  @keyframes truckBob {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50%      { transform: translateX(-50%) translateY(-1.5px); }
+  }
+  /* corpo do caminhão */
+  .truck .cargo {
+    position: absolute;
+    left: 0; bottom: 7px;
+    width: 40px; height: 26px;
+    background: var(--accent);
+    border-radius: 5px 6px 4px 4px;
+    box-shadow: var(--shadow-blue);
+  }
+  /* luazinha dourada na carroceria */
+  .truck .cargo::before {
+    content: '';
+    position: absolute;
+    left: 9px; top: 8px;
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--gold);
+    box-shadow: inset -3.5px 1px 0 0 var(--accent);
+  }
+  /* cabine */
+  .truck .cab {
+    position: absolute;
+    left: 38px; bottom: 7px;
+    width: 21px; height: 19px;
+    background: var(--blue-400);
+    border-radius: 4px 7px 4px 4px;
+  }
+  .truck .cab::before {
+    content: '';
+    position: absolute;
+    right: 3px; top: 3px;
+    width: 9px; height: 8px;
+    background: var(--blue-100);
+    border-radius: 2px;
+  }
+  /* rodas */
+  .truck .wheel {
+    position: absolute;
+    bottom: 0;
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--navy-900);
+    border: 2.5px solid var(--blue-300);
+    animation: spin 0.4s linear infinite;
+  }
+  .truck .wheel.w1 { left: 6px; }
+  .truck .wheel.w2 { left: 42px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
   .loading-text {
     font-size: 13px;
     color: var(--fg-2);
@@ -450,7 +555,14 @@
     <span class="wm">Luuna<svg class="moon" viewBox="0 0 100 100"><path d="M82 54a36 36 0 1 1-26-35 28 28 0 1 0 26 35z" fill="#F5C53D"/></svg></span>
   </div>
   <div class="intro-sub">Acorde melhor</div>
-  <div class="intro-bar"><i></i></div>
+  <div class="intro-road">
+    <div class="truck intro-truck">
+      <div class="cargo"></div>
+      <div class="cab"></div>
+      <div class="wheel w1"></div>
+      <div class="wheel w2"></div>
+    </div>
+  </div>
 </div>
 
 <div class="bg-blobs" aria-hidden="true">
@@ -481,7 +593,14 @@
   </div>
 
   <div class="loading" id="loading">
-    <div class="spinner"></div>
+    <div class="road">
+      <div class="truck">
+        <div class="cargo"></div>
+        <div class="cab"></div>
+        <div class="wheel w1"></div>
+        <div class="wheel w2"></div>
+      </div>
+    </div>
     <div class="loading-text">Procurando NF nas transportadoras…</div>
   </div>
 
@@ -544,14 +663,14 @@
       setTimeout(() => {
         document.body.classList.add("revealed");
         document.getElementById("intro").classList.add("done");
-      }, 2050);
+      }, 2800);
     });
     setTimeout(() => {
       if(!document.body.classList.contains("revealed")){
         document.body.classList.add("revealed");
         document.getElementById("intro").classList.add("done");
       }
-    }, 3200);
+    }, 3900);
   })();
 
   document.getElementById("inputNF").addEventListener("keydown", (e) => {

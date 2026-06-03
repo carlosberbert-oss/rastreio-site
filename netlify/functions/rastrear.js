@@ -46,99 +46,129 @@ exports.handler = async (event) => {
 
   try {
     const params = event.queryStringParameters || {};
-    const carrier = (params.carrier || "").toUpperCase();
+    const carrierParam = (params.carrier || "AUTO").toUpperCase();
     const nf = (params.nf || "").trim().replace(/\D/g, "");
 
     if (!nf) {
       return resp(400, corsHeaders, { ok: false, erro: "Informe a NF" });
     }
-    if (!["FITLOG", "MIRA"].includes(carrier)) {
-      return resp(400, corsHeaders, { ok: false, erro: "Transportadora inválida (use FITLOG ou MIRA)" });
-    }
 
-    const senha = carrier === "FITLOG" ? SENHA_FITLOG : SENHA_MIRA;
+    // === Modo AUTO: tenta sequencialmente FITLOG → MIRA ===
+    if (carrierParam === "AUTO") {
+      const ordem = ["FITLOG", "MIRA"];
+      let ultimoErro = null;
 
-    // ====== Passo 1: consulta inicial (resultSSW) ======
-    const r1 = await fetch(URL_RESULT, {
-      method: "POST",
-      headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ cnpj: CNPJ, NR: nf, chave: senha }).toString()
-    });
-
-    if (!r1.ok) {
-      return resp(502, corsHeaders, { ok: false, erro: "SSW retornou HTTP " + r1.status });
-    }
-
-    const html1 = await r1.text();
-    const tokens = extrairTokensDetalhado(html1);
-
-    // Se não há link de "Mais detalhes", a NF não tem histórico/não foi encontrada
-    if (!tokens) {
-      // Tenta extrair pelo menos o status básico
-      const dadosBasicos = parsearHtmlSswBasico(html1, nf);
-      if (!dadosBasicos) {
-        return resp(200, corsHeaders, {
-          ok: false,
-          erro: "NF não encontrada ou sem informação disponível",
-          nf, carrier
-        });
+      for (const carrier of ordem) {
+        try {
+          const r = await consultarCarrier(carrier, nf);
+          if (r && r.ok) {
+            return resp(200, corsHeaders, r);
+          }
+          // Se foi tentado mas não achou, salva o erro e continua
+          ultimoErro = r && r.erro ? r.erro : "NF não encontrada";
+        } catch (e) {
+          ultimoErro = e.message || "Erro na consulta";
+        }
       }
-      // Retorna sem timeline (NF muito recente, ainda não tem eventos)
-      return resp(200, corsHeaders, {
-        ok: true,
-        nf, carrier,
-        eventos: [],
-        statusAtual: {
-          dataHora: dadosBasicos.dataHora,
-          unidade: dadosBasicos.local,
-          situacao: dadosBasicos.situacao,
-          descricao: ""
-        },
-        previsao: dadosBasicos.previsao || "",
-        remetente: "", destinatario: "", numeroFiscal: ""
-      });
-    }
 
-    // ====== Passo 2: rastreamento detalhado ======
-    const r2 = await fetch(URL_DETALHADO, {
-      method: "POST",
-      headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ id: tokens.id, md: tokens.md, w: "x" }).toString()
-    });
-
-    if (!r2.ok) {
-      return resp(502, corsHeaders, { ok: false, erro: "SSW detalhado retornou HTTP " + r2.status });
-    }
-
-    const html2 = await r2.text();
-    const detalhe = parsearDetalhado(html2);
-
-    if (!detalhe || detalhe.eventos.length === 0) {
+      // Nenhuma transportadora achou
       return resp(200, corsHeaders, {
         ok: false,
-        erro: "Falha ao extrair histórico (estrutura do SSW mudou?)",
-        nf, carrier
+        erro: "NF não encontrada em nenhuma transportadora",
+        nf,
+        carrier: "AUTO"
       });
     }
 
-    // Último evento = status atual
-    const statusAtual = detalhe.eventos[detalhe.eventos.length - 1];
+    // === Modo explícito: usa o carrier informado ===
+    if (!["FITLOG", "MIRA"].includes(carrierParam)) {
+      return resp(400, corsHeaders, { ok: false, erro: "Transportadora inválida" });
+    }
 
-    return resp(200, corsHeaders, {
-      ok: true,
-      nf, carrier,
-      remetente:    detalhe.remetente,
-      destinatario: detalhe.destinatario,
-      previsao:     detalhe.previsao,
-      numeroFiscal: detalhe.numeroFiscal,
-      eventos:      detalhe.eventos,
-      statusAtual:  statusAtual
-    });
+    const resultado = await consultarCarrier(carrierParam, nf);
+    return resp(200, corsHeaders, resultado);
 
   } catch (err) {
     return resp(500, corsHeaders, { ok: false, erro: "Exceção: " + err.message });
   }
 };
+
+/**
+ * Consulta uma transportadora específica (FITLOG ou MIRA) via SSW.
+ * Retorna o objeto completo de resposta ou { ok: false, erro: ... }
+ */
+async function consultarCarrier(carrier, nf) {
+  const senha = carrier === "FITLOG" ? SENHA_FITLOG : SENHA_MIRA;
+
+  // ====== Passo 1: consulta inicial (resultSSW) ======
+  const r1 = await fetch(URL_RESULT, {
+    method: "POST",
+    headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ cnpj: CNPJ, NR: nf, chave: senha }).toString()
+  });
+
+  if (!r1.ok) {
+    return { ok: false, erro: "SSW HTTP " + r1.status, nf, carrier };
+  }
+
+  const html1 = await r1.text();
+  const tokens = extrairTokensDetalhado(html1);
+
+  // Se não há link de "Mais detalhes", a NF não tem histórico/não foi encontrada
+  if (!tokens) {
+    // Tenta extrair pelo menos o status básico
+    const dadosBasicos = parsearHtmlSswBasico(html1, nf);
+    if (!dadosBasicos) {
+      return { ok: false, erro: "NF não encontrada nessa transportadora", nf, carrier };
+    }
+    // Retorna sem timeline (NF muito recente, ainda não tem eventos)
+    return {
+      ok: true,
+      nf, carrier,
+      eventos: [],
+      statusAtual: {
+        dataHora: dadosBasicos.dataHora,
+        unidade: dadosBasicos.local,
+        situacao: dadosBasicos.situacao,
+        descricao: ""
+      },
+      previsao: dadosBasicos.previsao || "",
+      remetente: "", destinatario: "", numeroFiscal: ""
+    };
+  }
+
+  // ====== Passo 2: rastreamento detalhado ======
+  const r2 = await fetch(URL_DETALHADO, {
+    method: "POST",
+    headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ id: tokens.id, md: tokens.md, w: "x" }).toString()
+  });
+
+  if (!r2.ok) {
+    return { ok: false, erro: "SSW detalhado HTTP " + r2.status, nf, carrier };
+  }
+
+  const html2 = await r2.text();
+  const detalhe = parsearDetalhado(html2);
+
+  if (!detalhe || detalhe.eventos.length === 0) {
+    return { ok: false, erro: "Falha ao extrair histórico", nf, carrier };
+  }
+
+  // Último evento = status atual
+  const statusAtual = detalhe.eventos[detalhe.eventos.length - 1];
+
+  return {
+    ok: true,
+    nf, carrier,
+    remetente:    detalhe.remetente,
+    destinatario: detalhe.destinatario,
+    previsao:     detalhe.previsao,
+    numeroFiscal: detalhe.numeroFiscal,
+    eventos:      detalhe.eventos,
+    statusAtual:  statusAtual
+  };
+}
 
 function resp(statusCode, headers, body) {
   return { statusCode, headers, body: JSON.stringify(body) };

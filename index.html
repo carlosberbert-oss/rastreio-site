@@ -26,6 +26,8 @@
     --border:#E4EAF2;
     --border-strong:#D4DEEA;
 
+    --gold:#F5C53D; --gold-soft:#FBE9A8;
+
     --success:#1F8A5B; --warning:#C9871F; --danger:#D64545;
     --fitlog:#5A9E2F; --mira:#C44C82;
 
@@ -50,7 +52,16 @@
     font-size:14px;line-height:1.5;letter-spacing:-.01em;
     -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
     min-height:100vh;
+    position:relative;
   }
+
+  /* ── soft organic brand shapes (Luuna mural feel) ── */
+  .bg-blobs{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;}
+  .bg-blobs span{position:absolute;border-radius:48% 52% 57% 43% / 53% 45% 55% 47%;filter:blur(2px);opacity:.5;}
+  .bg-blobs .b1{width:340px;height:300px;left:-120px;top:60px;background:radial-gradient(circle at 40% 40%,#DCE9F8,#E9F1FB);}
+  .bg-blobs .b2{width:280px;height:260px;right:-110px;top:220px;background:radial-gradient(circle at 60% 40%,#E4EFFA,#EEF4FB);opacity:.7;}
+  .bg-blobs .b3{width:200px;height:190px;right:60px;bottom:80px;background:radial-gradient(circle at 50% 50%,#FBEFC4,#FBF3D6);opacity:.45;}
+  .container{position:relative;z-index:1;}
 
   /* ─────────────────────────  INTRO / SPLASH  ───────────────────────── */
   #intro{
@@ -62,22 +73,24 @@
   #intro.done{opacity:0;visibility:hidden;}
 
   .intro-mark{
-    display:flex;align-items:baseline;gap:2px;
-    font-weight:700;font-size:clamp(40px,9vw,76px);letter-spacing:-3.5px;color:var(--navy-900);
+    display:flex;align-items:flex-start;justify-content:center;
     opacity:0;transform:translateY(14px) scale(.97);
     animation:introMark 1s var(--ease-out) .15s forwards;
   }
-  .intro-mark sup{font-size:.26em;font-weight:500;color:var(--blue-500);letter-spacing:0;transform:translateY(-.1em);}
-  .intro-mark .cursor{
-    display:inline-block;width:.085em;height:1em;margin-left:.06em;border-radius:2px;
-    background:var(--blue-500);transform:translateY(.06em);
-    opacity:0;animation:introCursor 1.1s steps(1) .5s 2;
+  .wm{
+    position:relative;display:inline-block;
+    font-weight:700;letter-spacing:-1.5px;color:var(--navy-900);line-height:1;
   }
+  .wm .moon{
+    position:absolute;top:-.32em;right:-.46em;width:.26em;height:.26em;
+    transform:rotate(8deg);
+  }
+  .intro-mark .wm{font-size:clamp(46px,9vw,82px);}
   @keyframes introMark{to{opacity:1;transform:none;}}
-  @keyframes introCursor{0%,100%{opacity:0;}50%{opacity:1;}}
 
   .intro-sub{
-    font-size:12px;font-weight:500;letter-spacing:4px;text-transform:uppercase;color:var(--blue-500);
+    font-size:13px;font-weight:500;letter-spacing:2px;color:var(--blue-600);
+    margin-top:6px;
     opacity:0;animation:introFade .7s var(--ease) .55s forwards;
   }
   @keyframes introFade{to{opacity:1;}}
@@ -106,10 +119,9 @@
   @keyframes rise{to{opacity:1;transform:none;}}
 
   /* Brand */
-  .brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:32px;}
-  .brand .mark{font-weight:700;font-size:20px;letter-spacing:-1.2px;color:var(--navy-900);line-height:1;}
-  .brand .mark sup{font-size:8px;font-weight:500;color:var(--blue-500);vertical-align:super;margin-left:1px;}
-  .brand .sep{width:1px;height:14px;background:var(--border-strong);}
+  .brand{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:32px;}
+  .brand .wm{font-size:22px;letter-spacing:-.6px;}
+  .brand .sep{width:1px;height:15px;background:var(--border-strong);}
   .brand .kicker{font-size:10px;font-weight:600;letter-spacing:3px;color:var(--blue-600);text-transform:uppercase;}
 
   /* Header */
@@ -255,15 +267,23 @@
 
 <!-- INTRO -->
 <div id="intro">
-  <div class="intro-mark">luuna<sup>®</sup><span class="cursor"></span></div>
-  <div class="intro-sub">Logística</div>
+  <div class="intro-mark">
+    <span class="wm">Luuna<svg class="moon" viewBox="0 0 100 100"><path d="M82 54a36 36 0 1 1-26-35 28 28 0 1 0 26 35z" fill="#F5C53D"/></svg></span>
+  </div>
+  <div class="intro-sub">Acorde melhor</div>
   <div class="intro-bar"><i></i></div>
+</div>
+
+<div class="bg-blobs" aria-hidden="true">
+  <span class="b1"></span>
+  <span class="b2"></span>
+  <span class="b3"></span>
 </div>
 
 <div class="container">
 
   <div class="brand reveal" style="--d:.05s">
-    <span class="mark">luuna<sup>®</sup></span>
+    <span class="wm">Luuna<svg class="moon" viewBox="0 0 100 100"><path d="M82 54a36 36 0 1 1-26-35 28 28 0 1 0 26 35z" fill="#F5C53D"/></svg></span>
     <span class="sep"></span>
     <span class="kicker">Logística</span>
   </div>
@@ -331,9 +351,7 @@
     </div>
   </div>
 
-  <div class="footer reveal" style="--d:.4s">
-    Powered by SSW · <span id="ts"></span>
-  </div>
+  <div class="footer reveal" style="--d:.4s">Luuna · 2026</div>
 
 </div>
 

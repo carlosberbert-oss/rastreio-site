@@ -1,20 +1,38 @@
 /**
- * Netlify Function — Proxy SSW
- * Recebe: ?carrier=FITLOG|MIRA&nf=99812
- * Devolve JSON: { ok, status, dataHora, local, previsao }
+ * Netlify Function — Proxy SSW (status + timeline completa)
  *
- * Por que precisa: o navegador é bloqueado por CORS ao chamar ssw.inf.br direto.
- * Essa function roda no servidor (Lambda), sem essa restrição.
+ * Recebe: ?carrier=FITLOG|MIRA&nf=99812
+ *
+ * Faz 2 chamadas:
+ *   1) POST /2/resultSSW → extrai tokens id/md da NF
+ *   2) POST /2/SSWDetalhado → extrai timeline completa de eventos
+ *
+ * Devolve JSON:
+ * {
+ *   ok, nf, carrier,
+ *   remetente, destinatario, previsao, numeroFiscal,
+ *   eventos: [
+ *     { dataHora, data, hora, unidade, filial, situacao, descricao }, ...
+ *   ],
+ *   statusAtual: <ultimo evento>
+ * }
  */
 
 const CNPJ = process.env.CNPJ || "42418313000104";
 const SENHA_FITLOG = process.env.SENHA_FITLOG || "0104";
 const SENHA_MIRA   = process.env.SENHA_MIRA   || "";
 
-const URL_SSW = "https://ssw.inf.br/2/resultSSW";
+const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
+const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
+
+const COMMON_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+  "Origin": "https://ssw.inf.br",
+  "Referer": "https://ssw.inf.br/2/rastreamento?"
+};
 
 exports.handler = async (event) => {
-  // Headers CORS — permite chamar de qualquer domínio (vamos restringir depois se quiser)
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -22,7 +40,6 @@ exports.handler = async (event) => {
     "Content-Type": "application/json; charset=utf-8"
   };
 
-  // Preflight CORS
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: corsHeaders, body: "" };
   }
@@ -30,101 +47,138 @@ exports.handler = async (event) => {
   try {
     const params = event.queryStringParameters || {};
     const carrier = (params.carrier || "").toUpperCase();
-    const nf = (params.nf || "").trim().replace(/\D/g, ""); // só dígitos
+    const nf = (params.nf || "").trim().replace(/\D/g, "");
 
     if (!nf) {
-      return {
-        statusCode: 400,
-        headers: corsHeaders,
-        body: JSON.stringify({ ok: false, erro: "Informe a NF" })
-      };
+      return resp(400, corsHeaders, { ok: false, erro: "Informe a NF" });
     }
-
     if (!["FITLOG", "MIRA"].includes(carrier)) {
-      return {
-        statusCode: 400,
-        headers: corsHeaders,
-        body: JSON.stringify({ ok: false, erro: "Transportadora inválida (use FITLOG ou MIRA)" })
-      };
+      return resp(400, corsHeaders, { ok: false, erro: "Transportadora inválida (use FITLOG ou MIRA)" });
     }
 
     const senha = carrier === "FITLOG" ? SENHA_FITLOG : SENHA_MIRA;
 
-    // Monta corpo do POST
-    const payload = new URLSearchParams({
-      cnpj: CNPJ,
-      NR: nf,
-      chave: senha
-    }).toString();
-
-    // Faz POST no SSW
-    const resp = await fetch(URL_SSW, {
+    // ====== Passo 1: consulta inicial (resultSSW) ======
+    const r1 = await fetch(URL_RESULT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-        "Origin": "https://ssw.inf.br",
-        "Referer": "https://ssw.inf.br/2/rastreamento?"
-      },
-      body: payload
+      headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ cnpj: CNPJ, NR: nf, chave: senha }).toString()
     });
 
-    if (!resp.ok) {
-      return {
-        statusCode: 502,
-        headers: corsHeaders,
-        body: JSON.stringify({ ok: false, erro: "SSW retornou HTTP " + resp.status })
-      };
+    if (!r1.ok) {
+      return resp(502, corsHeaders, { ok: false, erro: "SSW retornou HTTP " + r1.status });
     }
 
-    const html = await resp.text();
-    const dados = parsearHtmlSsw(html, nf);
+    const html1 = await r1.text();
+    const tokens = extrairTokensDetalhado(html1);
 
-    if (!dados) {
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify({
+    // Se não há link de "Mais detalhes", a NF não tem histórico/não foi encontrada
+    if (!tokens) {
+      // Tenta extrair pelo menos o status básico
+      const dadosBasicos = parsearHtmlSswBasico(html1, nf);
+      if (!dadosBasicos) {
+        return resp(200, corsHeaders, {
           ok: false,
           erro: "NF não encontrada ou sem informação disponível",
-          nf: nf,
-          carrier: carrier
-        })
-      };
+          nf, carrier
+        });
+      }
+      // Retorna sem timeline (NF muito recente, ainda não tem eventos)
+      return resp(200, corsHeaders, {
+        ok: true,
+        nf, carrier,
+        eventos: [],
+        statusAtual: {
+          dataHora: dadosBasicos.dataHora,
+          unidade: dadosBasicos.local,
+          situacao: dadosBasicos.situacao,
+          descricao: ""
+        },
+        previsao: dadosBasicos.previsao || "",
+        remetente: "", destinatario: "", numeroFiscal: ""
+      });
     }
 
-    return {
-      statusCode: 200,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        ok: true,
-        nf: nf,
-        carrier: carrier,
-        status: dados.situacao,
-        dataHora: dados.dataHora,
-        local: dados.local,
-        previsao: dados.previsao
-      })
-    };
+    // ====== Passo 2: rastreamento detalhado ======
+    const r2 = await fetch(URL_DETALHADO, {
+      method: "POST",
+      headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ id: tokens.id, md: tokens.md, w: "x" }).toString()
+    });
+
+    if (!r2.ok) {
+      return resp(502, corsHeaders, { ok: false, erro: "SSW detalhado retornou HTTP " + r2.status });
+    }
+
+    const html2 = await r2.text();
+    const detalhe = parsearDetalhado(html2);
+
+    if (!detalhe || detalhe.eventos.length === 0) {
+      return resp(200, corsHeaders, {
+        ok: false,
+        erro: "Falha ao extrair histórico (estrutura do SSW mudou?)",
+        nf, carrier
+      });
+    }
+
+    // Último evento = status atual
+    const statusAtual = detalhe.eventos[detalhe.eventos.length - 1];
+
+    return resp(200, corsHeaders, {
+      ok: true,
+      nf, carrier,
+      remetente:    detalhe.remetente,
+      destinatario: detalhe.destinatario,
+      previsao:     detalhe.previsao,
+      numeroFiscal: detalhe.numeroFiscal,
+      eventos:      detalhe.eventos,
+      statusAtual:  statusAtual
+    });
 
   } catch (err) {
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({ ok: false, erro: "Exceção: " + err.message })
-    };
+    return resp(500, corsHeaders, { ok: false, erro: "Exceção: " + err.message });
   }
 };
 
+function resp(statusCode, headers, body) {
+  return { statusCode, headers, body: JSON.stringify(body) };
+}
+
 /**
- * Parser do HTML do SSW. Retorna { situacao, dataHora, local, previsao } ou null.
- * Reaproveita a lógica do Apps Script.
+ * Extrai os tokens id e md do link "Mais detalhes" da página resultSSW.
+ *
+ * O link tem a forma:
+ *   onclick="opx('/2/ssw_SSWDetalhado?id=...&amp;md=...')"
+ * ou (form):
+ *   <input id="id" value="...">
+ *   <input id="md" value="...">
  */
-function parsearHtmlSsw(html, nfBuscada) {
+function extrairTokensDetalhado(html) {
+  // Decodifica entidades comuns
+  const htmlDecodificado = html.replace(/&amp;/g, "&");
+
+  // Tenta padrão onclick="opx('/2/ssw_SSWDetalhado?id=XXX&md=YYY')"
+  const m1 = htmlDecodificado.match(/ssw_SSWDetalhado\?id=([^&'"]+)&md=([^'")]+)/);
+  if (m1) {
+    return { id: m1[1], md: m1[2] };
+  }
+
+  // Tenta padrão de inputs hidden (no caso da própria página detalhada estar embedada)
+  const idMatch = htmlDecodificado.match(/<input[^>]*\bid="id"[^>]*value\s*=\s*"([^"]+)"/i);
+  const mdMatch = htmlDecodificado.match(/<input[^>]*\bid="md"[^>]*value\s*=\s*"([^"]+)"/i);
+  if (idMatch && mdMatch) {
+    return { id: idMatch[1], md: mdMatch[1] };
+  }
+
+  return null;
+}
+
+/**
+ * Parser do resultSSW (página simples) — fallback quando não tem detalhado.
+ */
+function parsearHtmlSswBasico(html, nfBuscada) {
   const nfNormalizada = String(parseInt(nfBuscada, 10));
 
-  // Formato 1: linhas com onclick (têm rastreamento completo)
   const blocos = html.split(/<tr[^>]+onclick=/i);
   for (let i = 1; i < blocos.length; i++) {
     const bloco = blocos[i];
@@ -133,21 +187,13 @@ function parsearHtmlSsw(html, nfBuscada) {
     if (!nfMatch) continue;
 
     const tokens = nfMatch[1].match(/\d{4,}/g) || [];
-    if (tokens.length === 0) continue;
-
-    // Verifica se algum token bate com a NF buscada
     let achou = false;
     for (const t of tokens) {
-      if (t === nfBuscada || String(parseInt(t, 10)) === nfNormalizada) {
-        achou = true;
-        break;
-      }
+      if (t === nfBuscada || String(parseInt(t, 10)) === nfNormalizada) { achou = true; break; }
     }
     if (!achou && tokens.length > 1) {
       const concat = tokens.slice(1).join("");
-      if (concat === nfBuscada || String(parseInt(concat, 10)) === nfNormalizada) {
-        achou = true;
-      }
+      if (concat === nfBuscada || String(parseInt(concat, 10)) === nfNormalizada) achou = true;
     }
     if (!achou) continue;
 
@@ -166,30 +212,108 @@ function parsearHtmlSsw(html, nfBuscada) {
     return { situacao, dataHora, local, previsao };
   }
 
-  // Formato 2: linhas SEM onclick — "Informação não disponível"
-  const blocos2 = html.split(/<tr[\s>]/i);
-  for (let b = 1; b < blocos2.length; b++) {
-    const bloco2 = blocos2[b];
-    if (bloco2.indexOf("onclick") >= 0) continue;
-    if (bloco2.indexOf("rastreamento") === -1) continue;
+  return null;
+}
 
-    const nfM = bloco2.match(/<p[^>]*class=["']?tdb["']?[^>]*>\s*(\d{4,7})\s*<\/p>/i);
-    if (!nfM) continue;
-    if (nfM[1] !== nfBuscada && String(parseInt(nfM[1], 10)) !== nfNormalizada) continue;
+/**
+ * Parser da página de Rastreamento Detalhado (SSWDetalhado).
+ *
+ * Extrai:
+ *   - Remetente, Destinatário, NF, Previsão de entrega
+ *   - Eventos (linhas de tabela com data/hora, unidade e situação)
+ */
+function parsearDetalhado(html) {
+  const out = {
+    remetente: "",
+    destinatario: "",
+    previsao: "",
+    numeroFiscal: "",
+    eventos: []
+  };
 
-    const stM = bloco2.match(/<p[^>]*class=["']?titulo["']?[^>]*>([\s\S]*?)<\/p>/i);
-    if (!stM) continue;
+  // Decodifica entidades
+  const decode = (s) => s
+    .replace(/&atilde;/gi, "ã").replace(/&Atilde;/g, "Ã")
+    .replace(/&ccedil;/gi, "ç").replace(/&Ccedil;/g, "Ç")
+    .replace(/&iacute;/gi, "í").replace(/&Iacute;/g, "Í")
+    .replace(/&eacute;/gi, "é").replace(/&Eacute;/g, "É")
+    .replace(/&oacute;/gi, "ó").replace(/&Oacute;/g, "Ó")
+    .replace(/&aacute;/gi, "á").replace(/&Aacute;/g, "Á")
+    .replace(/&uacute;/gi, "ú").replace(/&Uacute;/g, "Ú")
+    .replace(/&otilde;/gi, "õ").replace(/&Otilde;/g, "Õ")
+    .replace(/&acirc;/gi,  "â").replace(/&ecirc;/gi,  "ê")
+    .replace(/&ocirc;/gi,  "ô")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&");
 
-    const sit2 = stM[1]
-      .replace(/<[^>]+>/g, "")
-      .trim()
-      .replace(/&atilde;/gi, "ã").replace(/&ccedil;/gi, "ç")
-      .replace(/&iacute;/gi, "í").replace(/&eacute;/gi, "é")
-      .replace(/&oacute;/gi, "ó").replace(/&aacute;/gi, "á")
-      .replace(/&amp;/gi, "&").replace(/&nbsp;/gi, " ");
+  // === Cabeçalho ===
+  // Remetente: <span class="tdb color-blue">Zebrands Comercial Ltda.</span>
+  // O HTML tem ordem: Remetente vem primeiro, Destinatário depois
+  const spans = [...html.matchAll(/<span[^>]*class=["']?tdb color-blue["']?[^>]*>([\s\S]*?)<\/span>/gi)];
+  if (spans.length >= 1) out.remetente    = decode(stripTags(spans[0][1])).trim();
+  if (spans.length >= 2) out.destinatario = decode(stripTags(spans[1][1])).trim();
 
-    return { situacao: sit2, dataHora: "", local: "", previsao: "" };
+  // Previsão de entrega: <span class="color-blue font-weight-bold">02/06/26</span>
+  const previsaoMatch = html.match(/Previs[aã]o de entrega[:\s]*<\/span>\s*<span[^>]*color-blue[^>]*>([^<]+)</i)
+                    || html.match(/Previs[aã]o de entrega[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{2,4})/i);
+  if (previsaoMatch) out.previsao = previsaoMatch[1].trim();
+
+  // N Fiscal: <span class="tdb color-blue font-weight-bold">1 102819</span>
+  // Pega a primeira ocorrência depois de "N Fiscal:"
+  const nfMatch = html.match(/N Fiscal[:\s]*<\/span>[\s\S]*?<span[^>]*font-weight-bold[^>]*>([^<]+)</i);
+  if (nfMatch) out.numeroFiscal = stripTags(nfMatch[1]).trim().replace(/\s+/g, " ");
+
+  // === Eventos ===
+  // Cada evento é uma <tr class="mb-4 ...">
+  // Dentro tem 3 <td>: data/hora, unidade, situação+descrição
+  const eventoRegex = /<tr\s+class=["']mb-4[\s\S]*?<\/tr>/gi;
+  const trs = html.match(eventoRegex) || [];
+
+  for (const tr of trs) {
+    // Data/Hora — primeiro <p class=tdb>: "28/05/26<BR>21:20"
+    const dataMatch = tr.match(/<p[^>]*class=["']?tdb["']?[^>]*>\s*(\d{2}\/\d{2}\/\d{2,4})\s*<br>\s*(\d{2}:\d{2})/i);
+    if (!dataMatch) continue;
+    const data = dataMatch[1].trim();
+    const hora = dataMatch[2].trim();
+
+    // Unidade — segundo <p class=tdb> (depois do data/hora): "GUARULHOS / SP<br>VAJ&nbsp;FIT"
+    // Pegamos todas as <p class=tdb> e ignoramos a primeira (data/hora)
+    const pTdbs = [...tr.matchAll(/<p[^>]*class=["']?tdb["']?[^>]*>([\s\S]*?)<\/p>/gi)];
+    let cidade = "", filial = "";
+    if (pTdbs.length >= 2) {
+      // Segundo bloco tdb = unidade. Pode ter "CIDADE / UF<br>FILIAL"
+      const conteudo = pTdbs[1][1];
+      const matchUnidade = conteudo.match(/^\s*([^<]+?)\s*<br>\s*([^<]+?)\s*$/i);
+      if (matchUnidade) {
+        cidade = decode(matchUnidade[1]).trim();
+        filial = decode(matchUnidade[2]).trim().replace(/\s+/g, " ");
+      } else {
+        cidade = decode(stripTags(conteudo)).trim();
+      }
+    }
+
+    // Situação — <p class=titulo><b>SAIDA DE UNIDADE</b></p>
+    const tituloMatch = tr.match(/<p[^>]*class=["']?titulo["']?[^>]*>\s*<b>([^<]+)<\/b>/i);
+    const situacao = tituloMatch ? decode(tituloMatch[1]).trim() : "";
+
+    // Descrição — o terceiro <p class=tdb> depois do titulo
+    const descMatch = tr.match(/class=["']?titulo["']?[\s\S]*?<\/p>\s*<p[^>]*class=["']?tdb["']?[^>]*>([\s\S]*?)<\/p>/i);
+    const descricao = descMatch ? decode(stripTags(descMatch[1])).trim().replace(/\s+/g, " ") : "";
+
+    out.eventos.push({
+      data,
+      hora,
+      dataHora: `${data} ${hora}`,
+      unidade: cidade,
+      filial,
+      situacao,
+      descricao
+    });
   }
 
-  return null;
+  return out;
+}
+
+function stripTags(s) {
+  return String(s || "").replace(/<[^>]+>/g, "");
 }

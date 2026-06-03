@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastreio de Pedidos</title>
+<style>
+  @import url("https://rsms.me/inter/inter.css");
+
+  :root {
+    --bg-1: #ffffff;
+    --bg-2: #f5f5f7;
+    --bg-3: #fbfbfd;
+    --fg-1: #1d1d1f;
+    --fg-2: #6e6e73;
+    --fg-3: #86868b;
+    --divider: #d2d2d7;
+    --divider-soft: #ececef;
+
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
+    --accent-soft: rgba(0,113,227,0.08);
+
+    --success: #29a745;
+    --warning: #ff9f0a;
+    --danger: #ff3b30;
+
+    --fitlog: #5a9e2f;
+    --mira: #d6336c;
+
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.08);
+
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+    --ease: cubic-bezier(0.4, 0.0, 0.2, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: linear-gradient(180deg, #f5f5f7 0%, #ffffff 100%);
+    min-height: 100vh;
+    color: var(--fg-1);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.47;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 60px 24px 80px;
+  }
+
+  /* Header */
+  .header { text-align: center; margin-bottom: 48px; }
+  .header h1 {
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+  .header p {
+    color: var(--fg-2);
+    font-size: 16px;
+    letter-spacing: -0.01em;
+  }
+
+  /* Card form */
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--divider);
+    border-radius: 18px;
+    padding: 32px;
+    box-shadow: var(--shadow);
+  }
+
+  .label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg-2);
+    margin-bottom: 8px;
+    letter-spacing: -0.005em;
+  }
+
+  /* Carrier selector — botões grandes */
+  .carrier-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .carrier-btn {
+    background: var(--bg-1);
+    border: 2px solid var(--divider);
+    border-radius: 12px;
+    padding: 16px 14px;
+    cursor: pointer;
+    font-family: var(--font);
+    text-align: center;
+    transition: all 150ms var(--ease);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .carrier-btn:hover { border-color: #b8b8bd; background: var(--bg-3); }
+  .carrier-btn.active {
+    border-color: var(--carrier-color, var(--accent));
+    background: var(--carrier-bg, var(--accent-soft));
+  }
+  .carrier-btn .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--carrier-color, var(--accent));
+  }
+  .carrier-btn .name {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--fg-1);
+  }
+  .carrier-btn[data-carrier="FITLOG"] { --carrier-color: var(--fitlog); --carrier-bg: rgba(90,158,47,0.08); }
+  .carrier-btn[data-carrier="MIRA"]   { --carrier-color: var(--mira);   --carrier-bg: rgba(214,51,108,0.08); }
+
+  /* Input NF */
+  .input-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .input-nf {
+    flex: 1;
+    padding: 14px 18px;
+    font-size: 16px;
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    background: var(--bg-1);
+    font-family: var(--font);
+    color: var(--fg-1);
+    transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+  }
+  .input-nf::placeholder { color: var(--fg-3); }
+  .input-nf:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0,113,227,0.12);
+  }
+  .btn-primary {
+    padding: 14px 24px;
+    background: var(--fg-1);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: background 150ms var(--ease), transform 100ms var(--ease);
+    min-width: 120px;
+  }
+  .btn-primary:hover:not(:disabled) { background: #38383a; }
+  .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+  .btn-primary:disabled {
+    background: var(--divider);
+    color: var(--fg-2);
+    cursor: not-allowed;
+  }
+
+  /* Result */
+  .result { margin-top: 24px; display: none; }
+  .result.visible { display: block; animation: rise 320ms var(--ease); }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-card {
+    background: var(--bg-1);
+    border: 1px solid var(--divider);
+    border-radius: 18px;
+    padding: 28px;
+    box-shadow: var(--shadow);
+  }
+
+  .result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--divider-soft);
+  }
+  .result-head .nf-info {
+    font-size: 13px;
+    color: var(--fg-2);
+    letter-spacing: -0.005em;
+  }
+  .result-head .nf-info b {
+    color: var(--fg-1);
+    font-weight: 500;
+  }
+  .result-head .carrier-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .carrier-tag.FITLOG { background: rgba(90,158,47,0.1);  color: var(--fitlog); }
+  .carrier-tag.MIRA   { background: rgba(214,51,108,0.1); color: var(--mira); }
+
+  .status-block {
+    text-align: center;
+    padding: 18px 0 6px;
+  }
+  .status-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    letter-spacing: 0.06em;
+    margin-bottom: 12px;
+    font-weight: 500;
+  }
+  .status-text {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--fg-1);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  .status-text.success { color: var(--success); }
+  .status-text.warning { color: var(--warning); }
+  .status-text.danger  { color: var(--danger); }
+
+  /* Detail rows */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .detail {
+    background: var(--bg-2);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .detail-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    letter-spacing: 0.04em;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+  .detail-value {
+    font-size: 14px;
+    color: var(--fg-1);
+    font-weight: 500;
+    letter-spacing: -0.005em;
+  }
+  .detail-value.empty { color: var(--fg-3); font-weight: 400; }
+
+  /* Error */
+  .error-card {
+    background: rgba(255,59,48,0.04);
+    border: 1px solid rgba(255,59,48,0.2);
+    border-radius: 14px;
+    padding: 18px 20px;
+    color: var(--danger);
+    font-size: 14px;
+    line-height: 1.5;
+    margin-top: 24px;
+    display: none;
+  }
+  .error-card.visible { display: block; animation: rise 240ms var(--ease); }
+
+  /* Spinner */
+  .loading {
+    display: none;
+    text-align: center;
+    padding: 32px 0;
+  }
+  .loading.visible { display: block; }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 2.5px solid var(--divider);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    margin: 0 auto 12px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-size: 13px;
+    color: var(--fg-2);
+    letter-spacing: -0.005em;
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    margin-top: 40px;
+    font-size: 12px;
+    color: var(--fg-3);
+    letter-spacing: -0.005em;
+  }
+
+  @media (max-width: 600px) {
+    .container { padding: 32px 16px 60px; }
+    .header h1 { font-size: 28px; }
+    .header p  { font-size: 14px; }
+    .card { padding: 22px; }
+    .result-card { padding: 22px; }
+    .input-row { flex-direction: column; }
+    .btn-primary { width: 100%; }
+    .detail-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <h1>Rastreio de Pedidos</h1>
+    <p>Acompanhe o status do seu pedido em tempo real</p>
+  </div>
+
+  <div class="card">
+    <label class="label">Transportadora</label>
+    <div class="carrier-grid">
+      <button class="carrier-btn active" data-carrier="FITLOG" onclick="selecionarCarrier('FITLOG')">
+        <span class="dot"></span>
+        <span class="name">Fitlog</span>
+      </button>
+      <button class="carrier-btn" data-carrier="MIRA" onclick="selecionarCarrier('MIRA')">
+        <span class="dot"></span>
+        <span class="name">Mira</span>
+      </button>
+    </div>
+
+    <label class="label" for="inputNF">Número da Nota Fiscal</label>
+    <div class="input-row">
+      <input type="text" id="inputNF" class="input-nf" placeholder="Ex: 99812" inputmode="numeric" autocomplete="off"/>
+      <button class="btn-primary" id="btnRastrear" onclick="rastrear()">Rastrear</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">Consultando transportadora…</div>
+  </div>
+
+  <div class="error-card" id="errorCard"></div>
+
+  <div class="result" id="result">
+    <div class="result-card">
+      <div class="result-head">
+        <div class="nf-info">
+          NF <b id="resNF">—</b>
+        </div>
+        <span class="carrier-tag" id="resCarrier">—</span>
+      </div>
+
+      <div class="status-block">
+        <div class="status-label">Status atual</div>
+        <div class="status-text" id="resStatus">—</div>
+      </div>
+
+      <div class="detail-grid">
+        <div class="detail">
+          <div class="detail-label">Última atualização</div>
+          <div class="detail-value" id="resDataHora">—</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">Local</div>
+          <div class="detail-value" id="resLocal">—</div>
+        </div>
+        <div class="detail" style="grid-column: span 2;">
+          <div class="detail-label">Previsão de entrega</div>
+          <div class="detail-value" id="resPrevisao">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Powered by SSW · <span id="ts"></span>
+  </div>
+
+</div>
+
+<script>
+  let carrierSelecionada = "FITLOG";
+
+  function selecionarCarrier(carrier) {
+    carrierSelecionada = carrier;
+    document.querySelectorAll(".carrier-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.carrier === carrier);
+    });
+  }
+
+  // Permite "Enter" pra rastrear
+  document.getElementById("inputNF").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") rastrear();
+  });
+
+  async function rastrear() {
+    const nf = document.getElementById("inputNF").value.trim().replace(/\D/g, "");
+    if (!nf) {
+      mostrarErro("Digite o número da nota fiscal");
+      return;
+    }
+
+    // Reset UI
+    document.getElementById("result").classList.remove("visible");
+    document.getElementById("errorCard").classList.remove("visible");
+    document.getElementById("loading").classList.add("visible");
+    document.getElementById("btnRastrear").disabled = true;
+
+    try {
+      const url = `/api/rastrear?carrier=${carrierSelecionada}&nf=${encodeURIComponent(nf)}`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+
+      document.getElementById("loading").classList.remove("visible");
+      document.getElementById("btnRastrear").disabled = false;
+
+      if (!data.ok) {
+        mostrarErro(data.erro || "Erro desconhecido");
+        return;
+      }
+
+      mostrarResultado(data);
+
+    } catch (err) {
+      document.getElementById("loading").classList.remove("visible");
+      document.getElementById("btnRastrear").disabled = false;
+      mostrarErro("Falha ao consultar: " + err.message);
+    }
+  }
+
+  function mostrarResultado(data) {
+    document.getElementById("resNF").textContent       = data.nf;
+    document.getElementById("resCarrier").textContent  = data.carrier;
+    document.getElementById("resCarrier").className    = "carrier-tag " + data.carrier;
+    document.getElementById("resStatus").textContent   = data.status || "—";
+
+    // Colorir status conforme palavras-chave
+    const statusEl = document.getElementById("resStatus");
+    statusEl.className = "status-text";
+    const s = (data.status || "").toUpperCase();
+    if (s.includes("ENTREG") && !s.includes("NAO")) statusEl.classList.add("success");
+    else if (s.includes("ROTA") || s.includes("FILIAL")) statusEl.classList.add("success");
+    else if (s.includes("ATRAS") || s.includes("ERRO") || s.includes("CANCEL")) statusEl.classList.add("danger");
+    else if (s.includes("NAO DISPONIV") || s.includes("NÃO DISPONÍV")) statusEl.classList.add("warning");
+
+    setValue("resDataHora", data.dataHora);
+    setValue("resLocal", data.local);
+    setValue("resPrevisao", data.previsao);
+
+    document.getElementById("result").classList.add("visible");
+  }
+
+  function setValue(id, val) {
+    const el = document.getElementById(id);
+    if (val && String(val).trim()) {
+      el.textContent = val;
+      el.classList.remove("empty");
+    } else {
+      el.textContent = "Não informado";
+      el.classList.add("empty");
+    }
+  }
+
+  function mostrarErro(msg) {
+    const el = document.getElementById("errorCard");
+    el.textContent = "✗ " + msg;
+    el.classList.add("visible");
+  }
+
+  // Timestamp no rodapé
+  document.getElementById("ts").textContent = new Date().getFullYear();
+</script>
+
+</body>
+</html>

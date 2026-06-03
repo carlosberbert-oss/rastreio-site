@@ -1,0 +1,17 @@
+# Configuração do Netlify
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Rota mais bonita: /api/rastrear → /.netlify/functions/rastrear
+[[redirects]]
+  from = "/api/rastrear"
+  to = "/.netlify/functions/rastrear"
+  status = 200
+
+# Headers para a Function (CORS já é tratado no código, mas reforça aqui)
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Cache-Control = "no-store"

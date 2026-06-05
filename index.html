@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Luuna blue */
     --navy-900:#0B2239; --navy-700:#16395C;
     --blue-700:#1B4F8A; --blue-600:#1F5C99; --blue-500:#2D6FB0;
     --blue-400:#4E8FC9; --blue-300:#8FB6D9; --blue-100:#E8F0FA;
@@ -31,8 +30,9 @@
     --warning: #C9871F;
     --danger: #D64545;
 
-    --fitlog: #5a9e2f;
-    --mira: #C44C82;
+    --fitlog:  #5a9e2f;
+    --mira:    #C44C82;
+    --onfleet: #6B3FA0;
 
     --shadow: 0 4px 16px rgba(15,44,73,.07), 0 1px 3px rgba(15,44,73,.05);
     --shadow-lg: 0 18px 48px rgba(15,44,73,.12), 0 4px 14px rgba(15,44,73,.06);
@@ -58,14 +58,13 @@
     position: relative;
   }
 
-  /* soft organic brand shapes */
   .bg-blobs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
   .bg-blobs span { position: absolute; border-radius: 48% 52% 57% 43% / 53% 45% 55% 47%; filter: blur(2px); opacity: .5; }
   .bg-blobs .b1 { width: 340px; height: 300px; left: -120px; top: 60px; background: radial-gradient(circle at 40% 40%, #DCE9F8, #E9F1FB); }
   .bg-blobs .b2 { width: 280px; height: 260px; right: -110px; top: 220px; background: radial-gradient(circle at 60% 40%, #E4EFFA, #EEF4FB); opacity: .7; }
   .bg-blobs .b3 { width: 200px; height: 190px; right: 60px; bottom: 80px; background: radial-gradient(circle at 50% 50%, #FBEFC4, #FBF3D6); opacity: .45; }
 
-  /* INTRO / SPLASH */
+  /* INTRO */
   #intro {
     position: fixed; inset: 0; z-index: 100;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
@@ -88,473 +87,184 @@
   .intro-bar i { display: block; height: 100%; width: 40%; border-radius: 980px; background: linear-gradient(90deg, var(--blue-400), var(--blue-600)); transform: translateX(-110%); animation: introLoad 1.25s var(--ease-out) .75s forwards; }
   @keyframes introLoad { to { transform: translateX(260%); } }
 
-  /* caminhão atravessando a abertura */
   .intro-road {
-    position: relative;
-    width: 240px;
-    height: 50px;
-    overflow: hidden;
-    opacity: 0;
-    animation: introFade .6s var(--ease) .55s forwards;
+    position: relative; width: 240px; height: 50px; overflow: hidden;
+    opacity: 0; animation: introFade .6s var(--ease) .55s forwards;
   }
   .intro-road::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 0; bottom: 6px;
-    height: 2px;
+    content: ''; position: absolute; left: 0; right: 0; bottom: 6px; height: 2px;
     background: repeating-linear-gradient(90deg, rgba(31,92,153,.22) 0 14px, transparent 14px 26px);
-    background-size: 26px 2px;
-    animation: roadMove .5s linear infinite;
+    background-size: 26px 2px; animation: roadMove .5s linear infinite;
   }
   .intro-truck {
-    bottom: 8px;
-    left: -80px;
-    transform: none;
+    bottom: 8px; left: -80px; transform: none;
     animation: introDrive 2.1s var(--ease-out) .6s forwards, truckBobY .42s ease-in-out infinite;
   }
-  @keyframes introDrive {
-    0%   { left: -80px; }
-    100% { left: 240px; }
-  }
-  @keyframes truckBobY {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-1.5px); }
-  }
+  @keyframes introDrive { 0% { left: -80px; } 100% { left: 240px; } }
+  @keyframes truckBobY { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
 
   .container {
     position: relative; z-index: 1;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 56px 24px 80px;
+    max-width: 720px; margin: 0 auto; padding: 56px 24px 80px;
   }
 
-  /* entrance reveal */
   .reveal { opacity: 0; transform: translateY(18px); }
   body.revealed .reveal { animation: rise 0.8s var(--ease-out) forwards; animation-delay: var(--d, 0s); }
   @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 
-  /* Brand */
   .brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 30px; }
   .brand .wm { font-size: 22px; letter-spacing: -.6px; }
   .brand .sep { width: 1px; height: 15px; background: var(--divider); }
   .brand .kicker { font-size: 10px; font-weight: 600; letter-spacing: 3px; color: var(--blue-600); text-transform: uppercase; }
 
-  /* Header */
   .header { text-align: center; margin-bottom: 40px; }
-  .header h1 {
-    font-size: 40px;
-    font-weight: 700;
-    letter-spacing: -0.035em;
-    line-height: 1.06;
-    margin-bottom: 12px;
-    color: var(--navy-900);
-  }
-  .header p {
-    color: var(--fg-2);
-    font-size: 16px;
-    letter-spacing: -0.01em;
-  }
+  .header h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.06; margin-bottom: 12px; color: var(--navy-900); }
+  .header p  { color: var(--fg-2); font-size: 16px; letter-spacing: -0.01em; }
 
-  /* Card form */
-  .card {
-    background: var(--bg-1);
-    border: 1px solid var(--divider);
-    border-radius: 18px;
-    padding: 32px;
-    box-shadow: var(--shadow);
-  }
+  .card { background: var(--bg-1); border: 1px solid var(--divider); border-radius: 18px; padding: 32px; box-shadow: var(--shadow); }
 
-  .label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--fg-2);
-    margin-bottom: 10px;
-    letter-spacing: -0.005em;
-  }
+  .label { display: block; font-size: 13px; font-weight: 600; color: var(--fg-2); margin-bottom: 10px; letter-spacing: -0.005em; }
+  .label-hint { font-size: 11px; font-weight: 400; color: var(--fg-3); margin-left: 6px; }
 
-  /* Input NF */
-  .input-row {
-    display: flex;
-    gap: 12px;
-  }
+  .input-row { display: flex; gap: 12px; }
   .input-nf {
-    flex: 1;
-    padding: 15px 18px;
-    font-size: 16px;
-    border: 1.5px solid var(--divider);
-    border-radius: 13px;
-    background: var(--bg-1);
-    font-family: var(--font);
-    color: var(--fg-1);
+    flex: 1; padding: 15px 18px; font-size: 16px;
+    border: 1.5px solid var(--divider); border-radius: 13px;
+    background: var(--bg-1); font-family: var(--font); color: var(--fg-1);
     transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
   }
   .input-nf::placeholder { color: var(--fg-3); }
-  .input-nf:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(31,92,153,0.14);
-  }
+  .input-nf:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(31,92,153,0.14); }
+
   .btn-primary {
     position: relative; overflow: hidden;
-    padding: 15px 26px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 13px;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.1px;
-    cursor: pointer;
-    font-family: var(--font);
+    padding: 15px 26px; background: var(--accent); color: #fff;
+    border: none; border-radius: 13px; font-size: 15px; font-weight: 600;
+    letter-spacing: 0.1px; cursor: pointer; font-family: var(--font);
     transition: background 180ms var(--ease), transform 120ms var(--ease), box-shadow 250ms var(--ease);
-    min-width: 128px;
-    box-shadow: var(--shadow-blue);
+    min-width: 128px; box-shadow: var(--shadow-blue);
   }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 14px 30px rgba(31,92,153,.36); }
   .btn-primary:active:not(:disabled) { transform: translateY(0); }
-  .btn-primary:disabled {
-    background: #C3D0DE;
-    color: #fff;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
+  .btn-primary:disabled { background: #C3D0DE; color: #fff; cursor: not-allowed; box-shadow: none; }
 
-  /* Result wrapper */
   .result { margin-top: 24px; display: none; }
   .result.visible { display: block; animation: pop 420ms var(--ease-out); }
-  @keyframes pop {
-    from { opacity: 0; transform: translateY(16px) scale(.985); }
-    to   { opacity: 1; transform: none; }
-  }
+  @keyframes pop { from { opacity: 0; transform: translateY(16px) scale(.985); } to { opacity: 1; transform: none; } }
 
-  /* Resumo do envio */
-  .summary-card {
-    background: var(--bg-1);
-    border: 1px solid var(--divider);
-    border-radius: 18px;
-    padding: 28px;
-    margin-bottom: 16px;
-    box-shadow: var(--shadow-lg);
-  }
+  .summary-card { background: var(--bg-1); border: 1px solid var(--divider); border-radius: 18px; padding: 28px; margin-bottom: 16px; box-shadow: var(--shadow-lg); }
+  .summary-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--divider); }
+  .summary-head .nf-block { font-size: 13px; color: var(--fg-2); }
+  .summary-head .nf-block b { color: var(--fg-1); font-weight: 600; font-size: 14px; }
 
-  .summary-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid var(--divider);
-  }
-  .summary-head .nf-block {
-    font-size: 13px;
-    color: var(--fg-2);
-  }
-  .summary-head .nf-block b {
-    color: var(--fg-1);
-    font-weight: 600;
-    font-size: 14px;
-  }
   .carrier-tag {
-    display: inline-block;
-    padding: 5px 12px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    display: inline-block; padding: 5px 12px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
   }
-  .carrier-tag.FITLOG { background: rgba(90,158,47,0.12);  color: var(--fitlog); }
-  .carrier-tag.MIRA   { background: rgba(196,76,130,0.12); color: var(--mira); }
+  .carrier-tag.FITLOG  { background: rgba(90,158,47,0.12);   color: var(--fitlog); }
+  .carrier-tag.MIRA    { background: rgba(196,76,130,0.12);  color: var(--mira); }
+  .carrier-tag.ONFLEET { background: rgba(107,63,160,0.12);  color: var(--onfleet); }
 
-  .current-status {
-    text-align: center;
-    padding: 18px 12px 6px;
-  }
-  .current-status .lbl {
-    font-size: 12px;
-    text-transform: uppercase;
-    color: var(--fg-3);
-    letter-spacing: 0.06em;
-    margin-bottom: 12px;
-    font-weight: 600;
-  }
-  .current-status .txt {
-    font-size: 27px;
-    font-weight: 700;
-    color: var(--fg-1);
-    letter-spacing: -0.02em;
-    line-height: 1.2;
-  }
+  .current-status { text-align: center; padding: 18px 12px 6px; }
+  .current-status .lbl { font-size: 12px; text-transform: uppercase; color: var(--fg-3); letter-spacing: 0.06em; margin-bottom: 12px; font-weight: 600; }
+  .current-status .txt { font-size: 27px; font-weight: 700; color: var(--fg-1); letter-spacing: -0.02em; line-height: 1.2; }
   .current-status .txt.success { color: var(--success); }
   .current-status .txt.warning { color: var(--warning); }
   .current-status .txt.danger  { color: var(--danger); }
+  .current-status .txt.info    { color: var(--blue-500); }
 
-  .info-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-top: 24px;
-  }
-  .info-tile {
-    background: var(--bg-2);
-    border: 1px solid var(--divider);
-    border-radius: 13px;
-    padding: 15px 16px;
-  }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
+  .info-tile { background: var(--bg-2); border: 1px solid var(--divider); border-radius: 13px; padding: 15px 16px; }
   .info-tile.full { grid-column: 1 / -1; }
-  .info-tile .k {
-    font-size: 11px;
-    text-transform: uppercase;
-    color: var(--fg-3);
-    letter-spacing: 0.05em;
-    font-weight: 600;
-    margin-bottom: 5px;
-  }
-  .info-tile .v {
-    font-size: 14px;
-    color: var(--fg-1);
-    font-weight: 600;
-    letter-spacing: -0.005em;
-  }
+  .info-tile .k { font-size: 11px; text-transform: uppercase; color: var(--fg-3); letter-spacing: 0.05em; font-weight: 600; margin-bottom: 5px; }
+  .info-tile .v { font-size: 14px; color: var(--fg-1); font-weight: 600; letter-spacing: -0.005em; }
   .info-tile .v.empty { color: var(--fg-3); font-weight: 400; }
 
-  /* Botão de comprovante */
+  /* Botão comprovante SSW */
   .btn-comprovante {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 18px;
-    padding: 14px 18px;
-    background: var(--accent-soft);
-    border: 1px solid rgba(31,92,153,0.18);
-    border-radius: 13px;
-    color: var(--accent);
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: -0.005em;
-    text-decoration: none;
+    display: flex; align-items: center; gap: 10px; margin-top: 18px;
+    padding: 14px 18px; background: var(--accent-soft);
+    border: 1px solid rgba(31,92,153,0.18); border-radius: 13px;
+    color: var(--accent); font-size: 14px; font-weight: 600;
+    letter-spacing: -0.005em; text-decoration: none;
     transition: background 150ms var(--ease), transform 100ms var(--ease), border-color 150ms var(--ease);
     cursor: pointer;
   }
-  .btn-comprovante:hover {
-    background: rgba(31,92,153,0.14);
-    border-color: rgba(31,92,153,0.34);
-  }
+  .btn-comprovante:hover { background: rgba(31,92,153,0.14); border-color: rgba(31,92,153,0.34); }
   .btn-comprovante:active { transform: scale(0.99); }
   .btn-comprovante svg { width: 18px; height: 18px; flex-shrink: 0; }
   .btn-comprovante span { flex: 1; }
   .btn-comprovante .arrow { width: 14px; height: 14px; opacity: 0.6; }
   .btn-comprovante:hover .arrow { opacity: 1; }
 
-  /* Timeline */
-  .timeline-card {
-    background: var(--bg-1);
-    border: 1px solid var(--divider);
-    border-radius: 18px;
-    padding: 28px;
-    box-shadow: var(--shadow);
+  /* Botão tracking Onfleet */
+  .btn-onfleet-track {
+    display: flex; align-items: center; gap: 10px; margin-top: 18px;
+    padding: 14px 18px;
+    background: rgba(107,63,160,0.08);
+    border: 1px solid rgba(107,63,160,0.22); border-radius: 13px;
+    color: var(--onfleet); font-size: 14px; font-weight: 600;
+    letter-spacing: -0.005em; text-decoration: none;
+    transition: background 150ms var(--ease), transform 100ms var(--ease), border-color 150ms var(--ease);
   }
-  .timeline-title {
-    font-size: 12px;
-    text-transform: uppercase;
-    color: var(--fg-3);
-    letter-spacing: 0.06em;
-    font-weight: 600;
-    margin-bottom: 22px;
-  }
-  .timeline {
-    position: relative;
-    padding-left: 24px;
-  }
-  .timeline::before {
-    content: '';
-    position: absolute;
-    left: 5px;
-    top: 6px;
-    bottom: 6px;
-    width: 2px;
-    background: var(--divider);
-    border-radius: 2px;
-  }
-  .ev {
-    position: relative;
-    padding: 0 0 24px 20px;
-  }
+  .btn-onfleet-track:hover { background: rgba(107,63,160,0.14); border-color: rgba(107,63,160,0.38); }
+  .btn-onfleet-track:active { transform: scale(0.99); }
+  .btn-onfleet-track svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .btn-onfleet-track span { flex: 1; }
+  .btn-onfleet-track .arrow { width: 14px; height: 14px; opacity: 0.6; }
+  .btn-onfleet-track:hover .arrow { opacity: 1; }
+
+  .timeline-card { background: var(--bg-1); border: 1px solid var(--divider); border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
+  .timeline-title { font-size: 12px; text-transform: uppercase; color: var(--fg-3); letter-spacing: 0.06em; font-weight: 600; margin-bottom: 22px; }
+  .timeline { position: relative; padding-left: 24px; }
+  .timeline::before { content: ''; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 2px; background: var(--divider); border-radius: 2px; }
+  .ev { position: relative; padding: 0 0 24px 20px; }
   .ev:last-child { padding-bottom: 0; }
-  .ev::before {
-    content: '';
-    position: absolute;
-    left: -24px;
-    top: 3px;
-    width: 12px; height: 12px;
-    border-radius: 50%;
-    background: var(--bg-1);
-    border: 2px solid var(--divider);
-    z-index: 1;
-  }
-  .ev.latest::before {
-    background: var(--accent);
-    border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(31,92,153,0.18);
-  }
-  .ev.success::before {
-    background: var(--success);
-    border-color: var(--success);
-    box-shadow: 0 0 0 4px rgba(31,138,91,0.18);
-  }
-  .ev.danger::before {
-    background: var(--danger);
-    border-color: var(--danger);
-    box-shadow: 0 0 0 4px rgba(214,69,69,0.18);
-  }
-
-  .ev .head {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    line-height: 1.3;
-    color: var(--fg-1);
-    margin-bottom: 5px;
-  }
-  .ev.latest .head { color: var(--accent); }
+  .ev::before { content: ''; position: absolute; left: -24px; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-1); border: 2px solid var(--divider); z-index: 1; }
+  .ev.latest::before  { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px rgba(31,92,153,0.18); }
+  .ev.success::before { background: var(--success); border-color: var(--success); box-shadow: 0 0 0 4px rgba(31,138,91,0.18); }
+  .ev.danger::before  { background: var(--danger);  border-color: var(--danger);  box-shadow: 0 0 0 4px rgba(214,69,69,0.18); }
+  .ev .head { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; color: var(--fg-1); margin-bottom: 5px; }
+  .ev.latest .head  { color: var(--accent); }
   .ev.success .head { color: var(--success); }
-  .ev.danger .head { color: var(--danger); }
-
-  .ev .meta {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: 12px;
-    color: var(--fg-2);
-    margin-bottom: 6px;
-    letter-spacing: -0.005em;
-  }
+  .ev.danger .head  { color: var(--danger); }
+  .ev .meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--fg-2); margin-bottom: 6px; letter-spacing: -0.005em; }
   .ev .meta .sep { color: var(--fg-3); }
-  .ev .desc {
-    font-size: 13px;
-    color: var(--fg-2);
-    line-height: 1.5;
-    letter-spacing: -0.005em;
-  }
+  .ev .desc { font-size: 13px; color: var(--fg-2); line-height: 1.5; letter-spacing: -0.005em; }
 
-  /* Error */
-  .error-card {
-    background: rgba(214,69,69,0.06);
-    border: 1px solid rgba(214,69,69,0.26);
-    border-radius: 14px;
-    padding: 18px 20px;
-    color: var(--danger);
-    font-size: 14px;
-    line-height: 1.5;
-    font-weight: 500;
-    margin-top: 24px;
-    display: none;
+  /* Bloco de endereço Onfleet */
+  .onfleet-addr {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-top: 14px; padding: 14px 16px;
+    background: rgba(107,63,160,0.06); border: 1px solid rgba(107,63,160,0.14);
+    border-radius: 12px; font-size: 13px; color: var(--fg-2); line-height: 1.5;
   }
+  .onfleet-addr svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; color: var(--onfleet); }
+
+  .error-card { background: rgba(214,69,69,0.06); border: 1px solid rgba(214,69,69,0.26); border-radius: 14px; padding: 18px 20px; color: var(--danger); font-size: 14px; line-height: 1.5; font-weight: 500; margin-top: 24px; display: none; }
   .error-card.visible { display: block; animation: pop 320ms var(--ease-out); }
 
-  /* Loading — caminhão de entrega andando */
-  .loading {
-    display: none;
-    text-align: center;
-    padding: 30px 0 36px;
-  }
+  .loading { display: none; text-align: center; padding: 30px 0 36px; }
   .loading.visible { display: block; animation: pop 320ms var(--ease-out); }
 
-  .road {
-    position: relative;
-    width: 200px;
-    height: 56px;
-    margin: 0 auto 18px;
-    overflow: hidden;
-  }
-  /* linha da estrada com tracejado correndo */
-  .road::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 0; bottom: 6px;
-    height: 2px;
-    background: repeating-linear-gradient(90deg, var(--divider) 0 14px, transparent 14px 26px);
-    background-size: 26px 2px;
-    animation: roadMove 0.5s linear infinite;
-  }
+  .road { position: relative; width: 200px; height: 56px; margin: 0 auto 18px; overflow: hidden; }
+  .road::after { content: ''; position: absolute; left: 0; right: 0; bottom: 6px; height: 2px; background: repeating-linear-gradient(90deg, var(--divider) 0 14px, transparent 14px 26px); background-size: 26px 2px; animation: roadMove 0.5s linear infinite; }
   @keyframes roadMove { to { background-position: -26px 0; } }
 
-  .truck {
-    position: absolute;
-    left: 50%;
-    bottom: 8px;
-    transform: translateX(-50%);
-    width: 64px; height: 36px;
-    animation: truckBob 0.42s ease-in-out infinite;
-  }
-  @keyframes truckBob {
-    0%, 100% { transform: translateX(-50%) translateY(0); }
-    50%      { transform: translateX(-50%) translateY(-1.5px); }
-  }
-  /* corpo do caminhão */
-  .truck .cargo {
-    position: absolute;
-    left: 0; bottom: 7px;
-    width: 40px; height: 26px;
-    background: var(--accent);
-    border-radius: 5px 6px 4px 4px;
-    box-shadow: var(--shadow-blue);
-  }
-  /* luazinha dourada na carroceria */
-  .truck .cargo::before {
-    content: '';
-    position: absolute;
-    left: 9px; top: 8px;
-    width: 11px; height: 11px;
-    border-radius: 50%;
-    background: var(--gold);
-    box-shadow: inset -3.5px 1px 0 0 var(--accent);
-  }
-  /* cabine */
-  .truck .cab {
-    position: absolute;
-    left: 38px; bottom: 7px;
-    width: 21px; height: 19px;
-    background: var(--blue-400);
-    border-radius: 4px 7px 4px 4px;
-  }
-  .truck .cab::before {
-    content: '';
-    position: absolute;
-    right: 3px; top: 3px;
-    width: 9px; height: 8px;
-    background: var(--blue-100);
-    border-radius: 2px;
-  }
-  /* rodas */
-  .truck .wheel {
-    position: absolute;
-    bottom: 0;
-    width: 11px; height: 11px;
-    border-radius: 50%;
-    background: var(--navy-900);
-    border: 2.5px solid var(--blue-300);
-    animation: spin 0.4s linear infinite;
-  }
+  .truck { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); width: 64px; height: 36px; animation: truckBob 0.42s ease-in-out infinite; }
+  @keyframes truckBob { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-1.5px); } }
+  .truck .cargo { position: absolute; left: 0; bottom: 7px; width: 40px; height: 26px; background: var(--accent); border-radius: 5px 6px 4px 4px; box-shadow: var(--shadow-blue); }
+  .truck .cargo::before { content: ''; position: absolute; left: 9px; top: 8px; width: 11px; height: 11px; border-radius: 50%; background: var(--gold); box-shadow: inset -3.5px 1px 0 0 var(--accent); }
+  .truck .cab { position: absolute; left: 38px; bottom: 7px; width: 21px; height: 19px; background: var(--blue-400); border-radius: 4px 7px 4px 4px; }
+  .truck .cab::before { content: ''; position: absolute; right: 3px; top: 3px; width: 9px; height: 8px; background: var(--blue-100); border-radius: 2px; }
+  .truck .wheel { position: absolute; bottom: 0; width: 11px; height: 11px; border-radius: 50%; background: var(--navy-900); border: 2.5px solid var(--blue-300); animation: spin 0.4s linear infinite; }
   .truck .wheel.w1 { left: 6px; }
   .truck .wheel.w2 { left: 42px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .loading-text {
-    font-size: 13px;
-    color: var(--fg-2);
-    letter-spacing: -0.005em;
-  }
+  .loading-text { font-size: 13px; color: var(--fg-2); letter-spacing: -0.005em; }
 
-  /* Footer */
-  .footer {
-    text-align: center;
-    margin-top: 44px;
-    font-size: 12px;
-    color: var(--fg-3);
-    letter-spacing: -0.005em;
-  }
+  .footer { text-align: center; margin-top: 44px; font-size: 12px; color: var(--fg-3); letter-spacing: -0.005em; }
 
   @media (max-width: 600px) {
     .container { padding: 36px 16px 60px; }
@@ -613,9 +323,12 @@
   </div>
 
   <div class="card reveal" style="--d:.3s">
-    <label class="label" for="inputNF">Número da Nota Fiscal</label>
+    <label class="label" for="inputNF">
+      NF ou Número de Pedido
+      <span class="label-hint">Ex: 99812 ou SAL-ORD-260601…</span>
+    </label>
     <div class="input-row">
-      <input type="text" id="inputNF" class="input-nf" placeholder="Ex: 99812" inputmode="numeric" autocomplete="off"/>
+      <input type="text" id="inputNF" class="input-nf" placeholder="Nota fiscal ou código SAL-ORD-…" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false"/>
       <button class="btn-primary" id="btnRastrear" onclick="rastrear()">Rastrear</button>
     </div>
   </div>
@@ -629,17 +342,16 @@
         <div class="wheel w2"></div>
       </div>
     </div>
-    <div class="loading-text">Procurando NF nas transportadoras…</div>
+    <div class="loading-text" id="loadingText">Procurando nas transportadoras…</div>
   </div>
 
   <div class="error-card" id="errorCard"></div>
 
   <div class="result" id="result">
-    <!-- Resumo do envio -->
     <div class="summary-card">
       <div class="summary-head">
         <div class="nf-block">
-          NF <b id="resNF">—</b>
+          <span id="resNFLabel">NF</span> <b id="resNF">—</b>
         </div>
         <span class="carrier-tag" id="resCarrier">—</span>
       </div>
@@ -668,7 +380,16 @@
         </div>
       </div>
 
-      <!-- Botão de comprovante (só aparece quando disponível) -->
+      <!-- Endereço de entrega (só Onfleet) -->
+      <div id="onfleetAddr" style="display:none;" class="onfleet-addr">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+          <circle cx="12" cy="9" r="2.5"/>
+        </svg>
+        <span id="onfleetAddrText"></span>
+      </div>
+
+      <!-- Botão comprovante SSW -->
       <a id="btnComprovante" href="#" target="_blank" rel="noopener" class="btn-comprovante" style="display: none;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -678,8 +399,19 @@
         </svg>
         <span>Baixar comprovante de entrega</span>
         <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="7 17 17 7"></polyline>
-          <polyline points="7 7 17 7 17 17"></polyline>
+          <polyline points="7 17 17 7"></polyline><polyline points="7 7 17 7 17 17"></polyline>
+        </svg>
+      </a>
+
+      <!-- Botão tracking Onfleet -->
+      <a id="btnOnfleetTrack" href="#" target="_blank" rel="noopener" class="btn-onfleet-track" style="display: none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="10 8 16 12 10 16 10 8"/>
+        </svg>
+        <span>Acompanhar entrega em tempo real</span>
+        <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="7 17 17 7"></polyline><polyline points="7 7 17 7 17 17"></polyline>
         </svg>
       </a>
     </div>
@@ -698,7 +430,7 @@
 </div>
 
 <script>
-  /* ── Intro reveal ── */
+  /* ── Intro ── */
   (function intro(){
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduce){ document.body.classList.add("revealed"); return; }
@@ -720,22 +452,44 @@
     if (e.key === "Enter") rastrear();
   });
 
+  // Detecta se o input é formato Onfleet (contém letras ou traços não-numéricos)
+  function detectarTipo(valor) {
+    if (/SAL-ORD/i.test(valor)) return "onfleet";
+    if (/^\d+$/.test(valor)) return "nf";
+    // Qualquer coisa com letras → trata como código de pedido Onfleet
+    if (/[a-zA-Z]/.test(valor)) return "onfleet";
+    return "nf";
+  }
+
   async function rastrear() {
-    const nf = document.getElementById("inputNF").value.trim().replace(/\D/g, "");
-    if (!nf) {
-      mostrarErro("Digite o número da nota fiscal");
+    const inputRaw = document.getElementById("inputNF").value.trim();
+    if (!inputRaw) {
+      mostrarErro("Digite o número da NF ou do pedido");
       return;
     }
+
+    const tipo = detectarTipo(inputRaw);
 
     document.getElementById("result").classList.remove("visible");
     document.getElementById("errorCard").classList.remove("visible");
     document.getElementById("loading").classList.add("visible");
     document.getElementById("btnRastrear").disabled = true;
 
+    // Texto de loading adaptado
+    document.getElementById("loadingText").textContent =
+      tipo === "onfleet"
+        ? "Buscando pedido na Onfleet…"
+        : "Procurando NF nas transportadoras…";
+
     try {
-      const url = `/api/rastrear?carrier=AUTO&nf=${encodeURIComponent(nf)}`;
-      const resp = await fetch(url);
-      const data = await resp.json();
+      // Constrói a URL: se for onfleet passa &pedido=, senão &nf=
+      const param = tipo === "onfleet"
+        ? `pedido=${encodeURIComponent(inputRaw)}`
+        : `nf=${encodeURIComponent(inputRaw.replace(/\D/g, ""))}`;
+
+      const url = `/api/rastrear?carrier=AUTO&${param}`;
+      const resposta = await fetch(url);
+      const data = await resposta.json();
 
       document.getElementById("loading").classList.remove("visible");
       document.getElementById("btnRastrear").disabled = false;
@@ -755,51 +509,70 @@
   }
 
   function mostrarResultado(data) {
-    document.getElementById("resNF").textContent       = data.nf;
-    document.getElementById("resCarrier").textContent  = data.carrier;
-    document.getElementById("resCarrier").className    = "carrier-tag " + data.carrier;
+    const ehOnfleet = data.carrier === "ONFLEET";
 
-    // Status atual = último evento (ou statusAtual quando não tem timeline)
+    // Label do identificador
+    document.getElementById("resNFLabel").textContent = ehOnfleet ? "Pedido" : "NF";
+    document.getElementById("resNF").textContent = data.nf || data.pedido || "—";
+
+    const carrierEl = document.getElementById("resCarrier");
+    carrierEl.textContent = ehOnfleet ? "Onfleet" : data.carrier;
+    carrierEl.className   = "carrier-tag " + data.carrier;
+
+    // Status atual
     const last = data.statusAtual || (data.eventos && data.eventos.length ? data.eventos[data.eventos.length - 1] : null);
     const statusTxt = last ? last.situacao : "—";
 
     const statusEl = document.getElementById("resStatus");
     statusEl.textContent = statusTxt;
-    statusEl.className = "txt " + classeDoStatus(statusTxt);
+    statusEl.className   = "txt " + classeDoStatus(statusTxt, data.carrier);
 
     setValue("resDataHora",     last ? last.dataHora : "");
     setValue("resPrevisao",     data.previsao);
     setValue("resRemetente",    data.remetente);
     setValue("resDestinatario", data.destinatario);
 
-    // Esconde tiles vazios
     document.getElementById("tileRemetente").style.display    = data.remetente    ? "" : "none";
     document.getElementById("tileDestinatario").style.display = data.destinatario ? "" : "none";
 
-    // Botão de comprovante: só aparece quando o SSW tem o link
+    // Endereço Onfleet
+    const addrEl = document.getElementById("onfleetAddr");
+    if (ehOnfleet && data.endereco) {
+      document.getElementById("onfleetAddrText").textContent = data.endereco;
+      addrEl.style.display = "flex";
+    } else {
+      addrEl.style.display = "none";
+    }
+
+    // Botão comprovante SSW
     const btnComp = document.getElementById("btnComprovante");
-    if (data.comprovanteUrl) {
+    if (!ehOnfleet && data.comprovanteUrl) {
       btnComp.href = data.comprovanteUrl;
       btnComp.style.display = "flex";
     } else {
       btnComp.style.display = "none";
     }
 
-    // Timeline
-    const timeline = document.getElementById("timeline");
-    timeline.innerHTML = "";
+    // Botão tracking Onfleet
+    const btnTrack = document.getElementById("btnOnfleetTrack");
+    if (ehOnfleet && data.trackingUrl) {
+      btnTrack.href = data.trackingUrl;
+      btnTrack.style.display = "flex";
+    } else {
+      btnTrack.style.display = "none";
+    }
+
+    // Timeline (SSW tem eventos; Onfleet não)
+    const timeline     = document.getElementById("timeline");
     const timelineCard = document.getElementById("timelineCard");
+    timeline.innerHTML = "";
 
     if (data.eventos && data.eventos.length > 0) {
-      // Ordem cronológica: mais antigo embaixo (mais recente em cima)
       const eventosOrdenados = [...data.eventos].reverse();
-
       eventosOrdenados.forEach((ev, idx) => {
         const div = document.createElement("div");
         div.className = "ev " + classeDoEvento(ev.situacao, idx === 0);
-
         const local = [ev.unidade, ev.filial].filter(Boolean).join(" · ");
-
         div.innerHTML = `
           <div class="head">${escapeHtml(ev.situacao || "—")}</div>
           <div class="meta">
@@ -810,7 +583,6 @@
         `;
         timeline.appendChild(div);
       });
-
       timelineCard.style.display = "";
     } else {
       timelineCard.style.display = "none";
@@ -820,7 +592,17 @@
     r.classList.remove("visible"); void r.offsetWidth; r.classList.add("visible");
   }
 
-  function classeDoStatus(s) {
+  function classeDoStatus(s, carrier) {
+    // Onfleet usa mapeamento próprio pelo texto do status
+    if (carrier === "ONFLEET") {
+      const u = (s || "").toUpperCase();
+      if (/ENTREGUE/.test(u))  return "success";
+      if (/ROTA/.test(u))      return "info";
+      if (/FALHA/.test(u))     return "danger";
+      if (/AGUARDANDO/.test(u)) return "warning";
+      return "";
+    }
+    // SSW
     const u = (s || "").toUpperCase();
     if (/ENTREG/.test(u) && !/N[AÃ]O/.test(u)) return "success";
     if (/RECUSA|NAO PODE|N[AÃ]O PODE|CANCEL|EXTRAVIO|AVARIA|DEVOLU/.test(u)) return "danger";
@@ -830,7 +612,7 @@
   }
 
   function classeDoEvento(situacao, isLatest) {
-    const cls = classeDoStatus(situacao);
+    const cls = classeDoStatus(situacao, "");
     if (isLatest && !cls) return "latest";
     return cls + (isLatest && (cls === "success" || cls === "danger") ? "" : (isLatest ? " latest" : ""));
   }
@@ -853,9 +635,7 @@
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
-    }[c]));
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
   }
 
   document.getElementById("ts").textContent = new Date().getFullYear();

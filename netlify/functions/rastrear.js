@@ -163,8 +163,9 @@ async function consultarCarrier(carrier, nf) {
     nf, carrier,
     remetente:    detalhe.remetente,
     destinatario: detalhe.destinatario,
-    previsao:     detalhe.previsao,
-    numeroFiscal: detalhe.numeroFiscal,
+    previsao:       detalhe.previsao,
+    numeroFiscal:   detalhe.numeroFiscal,
+    comprovanteUrl: detalhe.comprovanteUrl,
     eventos:      detalhe.eventos,
     statusAtual:  statusAtual
   };
@@ -258,6 +259,7 @@ function parsearDetalhado(html) {
     destinatario: "",
     previsao: "",
     numeroFiscal: "",
+    comprovanteUrl: "",
     eventos: []
   };
 
@@ -292,6 +294,18 @@ function parsearDetalhado(html) {
   // Pega a primeira ocorrência depois de "N Fiscal:"
   const nfMatch = html.match(/N Fiscal[:\s]*<\/span>[\s\S]*?<span[^>]*font-weight-bold[^>]*>([^<]+)</i);
   if (nfMatch) out.numeroFiscal = stripTags(nfMatch[1]).trim().replace(/\s+/g, " ");
+
+  // Comprovante: <a href="comprovante?sigla=...&s=...&img=...">Comprovante</a>
+  // Quando o comprovante existe, vem como <a> com href. Quando não tem, é um <label> sem href.
+  const compMatch = html.match(/<a[^>]+href=["']([^"']*comprovante\?[^"']+)["'][^>]*>\s*Comprovante\s*<\/a>/i);
+  if (compMatch) {
+    let url = compMatch[1].replace(/&amp;/g, "&");
+    // Se o link for relativo, vira absoluto
+    if (!/^https?:\/\//i.test(url)) {
+      url = url.startsWith("/") ? `https://ssw.inf.br${url}` : `https://ssw.inf.br/2/${url}`;
+    }
+    out.comprovanteUrl = url;
+  }
 
   // === Eventos ===
   // Cada evento é uma <tr class="mb-4 ...">

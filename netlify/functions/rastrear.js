@@ -192,9 +192,15 @@ async function consultarOnfleet(pedidoRaw) {
 }
 
 async function buscarTaskOnfleet(sufixo) {
+  // tasks/all retorna um resumo sem o campo `notes`.
+  // Estratégia:
+  //   1. Lista todas as tasks (paginando)
+  //   2. Para cada lote, busca os detalhes completos em paralelo via GET /tasks/:id
+  //   3. Verifica o campo `notes` no detalhe completo
+
   const from = Date.now() - 90 * 24 * 60 * 60 * 1000;
   let lastId = null;
-  const MAX_PAGINAS = 20;
+  const MAX_PAGINAS = 10; // até ~640 tasks (64 por página)
 
   for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
     let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
@@ -210,8 +216,22 @@ async function buscarTaskOnfleet(sufixo) {
     const data  = await resposta.json();
     const tasks = Array.isArray(data) ? data : (data.tasks || []);
 
+    if (tasks.length === 0) break;
+
+    // Primeiro tenta no campo notes do resumo (caso a API já devolva)
     for (const task of tasks) {
       if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
+    }
+
+    // notes não veio no resumo → busca detalhes em paralelo para o lote inteiro
+    const detalhes = await Promise.all(
+      tasks.map(t => buscarTaskDetalhada(t.id).catch(() => null))
+    );
+
+    for (const detalhe of detalhes) {
+      if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
+        return detalhe;
+      }
     }
 
     const proximoLastId = Array.isArray(data) ? null : data.lastId;
@@ -220,6 +240,14 @@ async function buscarTaskOnfleet(sufixo) {
   }
 
   return null;
+}
+
+async function buscarTaskDetalhada(taskId) {
+  const resposta = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
+    headers: { Authorization: onfleetAuth() },
+  });
+  if (!resposta.ok) return null;
+  return resposta.json();
 }
 
 // ═══════════════════════════════════════════════════════════════

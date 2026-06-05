@@ -192,20 +192,20 @@ async function consultarOnfleet(pedidoRaw) {
 }
 
 async function buscarTaskOnfleet(sufixo) {
-  // tasks/all retorna um resumo sem o campo `notes`.
-  // Estratégia:
-  //   1. Lista todas as tasks (paginando)
-  //   2. Para cada lote, busca os detalhes completos em paralelo via GET /tasks/:id
-  //   3. Verifica o campo `notes` no detalhe completo
+  // tasks/all não inclui o campo `notes` no resumo.
+  // Estratégia: busca as tasks mais RECENTES primeiro (últimas 24h → 7d → 30d)
+  // e para cada janela faz GET /tasks/:id em lotes pequenos (respeitando rate limit).
+  // Assim pedidos de hoje são achados na primeira página sem paginar.
 
-  const from = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 dias
-  let lastId = null;
-  const MAX_PAGINAS = 10; // até ~640 tasks (64 por página)
+  const JANELAS = [
+    Date.now() - 1  * 24 * 60 * 60 * 1000,  // últimas 24h
+    Date.now() - 7  * 24 * 60 * 60 * 1000,  // últimos 7 dias
+    Date.now() - 30 * 24 * 60 * 60 * 1000,  // últimos 30 dias
+  ];
 
-  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
-    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
-    if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
-
+  for (const from of JANELAS) {
+    // Busca a primeira página da janela (mais recentes primeiro)
+    const url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
     const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
 
     if (!resposta.ok) {
@@ -216,17 +216,16 @@ async function buscarTaskOnfleet(sufixo) {
     const data  = await resposta.json();
     const tasks = Array.isArray(data) ? data : (data.tasks || []);
 
-    if (tasks.length === 0) break;
+    if (tasks.length === 0) continue;
 
-    // Primeiro tenta no campo notes do resumo (caso a API já devolva)
+    // Tenta no resumo primeiro (caso notes já venha)
     for (const task of tasks) {
       if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
     }
 
-    // notes não veio no resumo → busca detalhes em lotes pequenos com delay
-    // Onfleet tem rate limit por segundo; lotes de 4 com 350ms de intervalo
+    // Busca detalhes individuais em lotes de 4 com 300ms entre lotes
     const BATCH_SIZE  = 4;
-    const BATCH_DELAY = 350; // ms entre lotes
+    const BATCH_DELAY = 300;
 
     for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
       const lote     = tasks.slice(i, i + BATCH_SIZE);
@@ -240,15 +239,12 @@ async function buscarTaskOnfleet(sufixo) {
         }
       }
 
-      // Aguarda antes do próximo lote (exceto no último)
       if (i + BATCH_SIZE < tasks.length) {
         await sleep(BATCH_DELAY);
       }
     }
-
-    const proximoLastId = Array.isArray(data) ? null : data.lastId;
-    if (!proximoLastId || tasks.length === 0) break;
-    lastId = proximoLastId;
+    // Se não achou na primeira página desta janela, tenta a próxima janela
+    // (evita paginar e estourar o timeout)
   }
 
   return null;

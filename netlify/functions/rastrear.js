@@ -198,7 +198,7 @@ async function buscarTaskOnfleet(sufixo) {
   //   2. Para cada lote, busca os detalhes completos em paralelo via GET /tasks/:id
   //   3. Verifica o campo `notes` no detalhe completo
 
-  const from = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  const from = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 dias
   let lastId = null;
   const MAX_PAGINAS = 10; // até ~640 tasks (64 por página)
 
@@ -223,14 +223,26 @@ async function buscarTaskOnfleet(sufixo) {
       if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
     }
 
-    // notes não veio no resumo → busca detalhes em paralelo para o lote inteiro
-    const detalhes = await Promise.all(
-      tasks.map(t => buscarTaskDetalhada(t.id).catch(() => null))
-    );
+    // notes não veio no resumo → busca detalhes em lotes pequenos com delay
+    // Onfleet tem rate limit por segundo; lotes de 4 com 350ms de intervalo
+    const BATCH_SIZE  = 4;
+    const BATCH_DELAY = 350; // ms entre lotes
 
-    for (const detalhe of detalhes) {
-      if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
-        return detalhe;
+    for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+      const lote     = tasks.slice(i, i + BATCH_SIZE);
+      const detalhes = await Promise.all(
+        lote.map(t => buscarTaskDetalhada(t.id).catch(() => null))
+      );
+
+      for (const detalhe of detalhes) {
+        if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
+          return detalhe;
+        }
+      }
+
+      // Aguarda antes do próximo lote (exceto no último)
+      if (i + BATCH_SIZE < tasks.length) {
+        await sleep(BATCH_DELAY);
       }
     }
 
@@ -248,6 +260,10 @@ async function buscarTaskDetalhada(taskId) {
   });
   if (!resposta.ok) return null;
   return resposta.json();
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ═══════════════════════════════════════════════════════════════

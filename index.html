@@ -482,10 +482,15 @@
         : "Procurando NF nas transportadoras…";
 
     try {
+      // Para Onfleet: normaliza letra O → zero (erro comum de digitação)
+      const inputNorm = tipo === "onfleet"
+        ? inputRaw.replace(/[oO]/g, "0")
+        : inputRaw;
+
       // Constrói a URL: se for onfleet passa &pedido=, senão &nf=
       const param = tipo === "onfleet"
-        ? `pedido=${encodeURIComponent(inputRaw)}`
-        : `nf=${encodeURIComponent(inputRaw.replace(/\D/g, ""))}`;
+        ? `pedido=${encodeURIComponent(inputNorm)}`
+        : `nf=${encodeURIComponent(inputNorm.replace(/\D/g, ""))}`;
 
       const url = `/api/rastrear?carrier=AUTO&${param}`;
       const resposta = await fetch(url);

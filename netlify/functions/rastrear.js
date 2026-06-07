@@ -197,54 +197,47 @@ async function buscarTaskOnfleet(sufixo) {
   // e para cada janela faz GET /tasks/:id em lotes pequenos (respeitando rate limit).
   // Assim pedidos de hoje são achados na primeira página sem paginar.
 
-  const JANELAS = [
-    Date.now() - 1  * 24 * 60 * 60 * 1000,  // últimas 24h
-    Date.now() - 7  * 24 * 60 * 60 * 1000,  // últimos 7 dias
-    Date.now() - 30 * 24 * 60 * 60 * 1000,  // últimos 30 dias
-  ];
+  // Pedidos Onfleet são criados no mesmo dia ou semana de trabalho (seg–sex).
+  // 7 dias cobre o caso mais distante (sexta → segunda seguinte).
+  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const url  = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
 
-  for (const from of JANELAS) {
-    // Busca a primeira página da janela (mais recentes primeiro)
-    const url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
-    const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+  const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
 
-    if (!resposta.ok) {
-      const txt = await resposta.text();
-      throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
-    }
+  if (!resposta.ok) {
+    const txt = await resposta.text();
+    throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
+  }
 
-    const data  = await resposta.json();
-    const tasks = Array.isArray(data) ? data : (data.tasks || []);
+  const data  = await resposta.json();
+  const tasks = Array.isArray(data) ? data : (data.tasks || []);
 
-    if (tasks.length === 0) continue;
+  if (tasks.length === 0) return null;
 
-    // Tenta no resumo primeiro (caso notes já venha)
-    for (const task of tasks) {
-      if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
-    }
+  // Tenta no resumo primeiro (caso notes já venha na listagem)
+  for (const task of tasks) {
+    if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
+  }
 
-    // Busca detalhes individuais em lotes de 4 com 300ms entre lotes
-    const BATCH_SIZE  = 4;
-    const BATCH_DELAY = 300;
+  // notes não vem no resumo → busca detalhes em lotes de 4 (rate limit ~4 req/s)
+  const BATCH_SIZE  = 4;
+  const BATCH_DELAY = 300; // ms entre lotes
 
-    for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
-      const lote     = tasks.slice(i, i + BATCH_SIZE);
-      const detalhes = await Promise.all(
-        lote.map(t => buscarTaskDetalhada(t.id).catch(() => null))
-      );
+  for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+    const lote     = tasks.slice(i, i + BATCH_SIZE);
+    const detalhes = await Promise.all(
+      lote.map(t => buscarTaskDetalhada(t.id).catch(() => null))
+    );
 
-      for (const detalhe of detalhes) {
-        if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
-          return detalhe;
-        }
-      }
-
-      if (i + BATCH_SIZE < tasks.length) {
-        await sleep(BATCH_DELAY);
+    for (const detalhe of detalhes) {
+      if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
+        return detalhe;
       }
     }
-    // Se não achou na primeira página desta janela, tenta a próxima janela
-    // (evita paginar e estourar o timeout)
+
+    if (i + BATCH_SIZE < tasks.length) {
+      await sleep(BATCH_DELAY);
+    }
   }
 
   return null;

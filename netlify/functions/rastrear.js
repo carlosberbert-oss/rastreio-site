@@ -59,6 +59,16 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
+    // DEBUG: ?debugteams=1 → lista os teams (id + nome)
+    if (params.debugteams === "1") {
+      const r = await fetch(`${ONFLEET_BASE}/teams`, { headers: { Authorization: onfleetAuth() } });
+      const teams = await r.json();
+      return resp(200, corsHeaders, {
+        ok: true,
+        teams: (Array.isArray(teams) ? teams : []).map(t => ({ id: t.id, name: t.name })),
+      });
+    }
+
     // DEBUG: ?debugfind=SAL-ORD-xxx → rastreia o pedido em todas as páginas
     if (params.debugfind) {
       const dbg = await debugFindPedido(params.debugfind);

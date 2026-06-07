@@ -53,8 +53,14 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
-    if (!inputBruto) {
+    if (!inputBruto && params.debug !== "1") {
       return resp(400, corsHeaders, { ok: false, erro: "Informe o número da NF ou do pedido" });
+    }
+
+    // ─── Modo DEBUG: ?debug=1 lista as tasks Onfleet com seus notes ──────────
+    if (params.debug === "1") {
+      const dbg = await debugOnfleet();
+      return resp(200, corsHeaders, dbg);
     }
 
     // ─── Modo AUTO ──────────────────────────────────────────────────────────
@@ -257,6 +263,44 @@ async function buscarTaskDetalhada(taskId) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Função de diagnóstico: lista as tasks dos últimos 7 dias e seus notes
+async function debugOnfleet() {
+  if (!ONFLEET_API_KEY) {
+    return { ok: false, erro: "ONFLEET_API_KEY não configurada" };
+  }
+
+  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const url  = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
+
+  const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+  if (!resposta.ok) {
+    const txt = await resposta.text();
+    return { ok: false, erro: `Onfleet HTTP ${resposta.status}`, detalhe: txt.slice(0, 300) };
+  }
+
+  const data  = await resposta.json();
+  const tasks = Array.isArray(data) ? data : (data.tasks || []);
+
+  // Pega só as 5 primeiras e busca o detalhe (que tem notes)
+  const amostra = tasks.slice(0, 5);
+  const detalhes = await Promise.all(
+    amostra.map(t => buscarTaskDetalhada(t.id).catch(() => null))
+  );
+
+  return {
+    ok: true,
+    formatoResposta: Array.isArray(data) ? "array" : "objeto-com-tasks",
+    totalTasksNaPrimeiraPagina: tasks.length,
+    temLastId: !Array.isArray(data) && !!data.lastId,
+    resumoTemNotes: amostra.map(t => ({ id: t.id, notesNoResumo: t.notes || null })),
+    notesDoDetalhe: detalhes.map(d => d ? {
+      id: d.id,
+      state: d.state,
+      notes: (d.notes || "").slice(0, 200),
+    } : null),
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════

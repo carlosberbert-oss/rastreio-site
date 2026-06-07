@@ -15,7 +15,8 @@
 const CNPJ        = process.env.CNPJ         || "42418313000104";
 const SENHA_FITLOG = process.env.SENHA_FITLOG || "0104";
 const SENHA_MIRA   = process.env.SENHA_MIRA   || "";
-const ONFLEET_API_KEY = process.env.ONFLEET_API_KEY || "";
+// ONFLEET_API_KEY é lida em runtime (process.env) dentro das funções,
+// porque constantes de topo podem ser avaliadas antes do Netlify injetar as env vars.
 
 const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
 const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
@@ -120,7 +121,8 @@ exports.handler = async (event) => {
 // ═══════════════════════════════════════════════════════════════
 
 function onfleetAuth() {
-  return "Basic " + Buffer.from(ONFLEET_API_KEY + ":").toString("base64");
+  const key = process.env.ONFLEET_API_KEY || "";
+  return "Basic " + Buffer.from(key + ":").toString("base64");
 }
 
 async function consultarOnfleet(pedidoRaw) {
@@ -132,7 +134,7 @@ async function consultarOnfleet(pedidoRaw) {
   const m = pedidoNorm.match(/SAL-ORD-([a-f0-9]+)/i);
   const sufixo = m ? m[1].toLowerCase() : pedidoNorm.toLowerCase();
 
-  if (!ONFLEET_API_KEY) {
+  if (!process.env.ONFLEET_API_KEY) {
     return { ok: false, erro: "ONFLEET_API_KEY não configurada.", pedido: pedidoRaw, carrier: "ONFLEET" };
   }
 
@@ -267,8 +269,17 @@ function sleep(ms) {
 
 // Função de diagnóstico: lista as tasks dos últimos 7 dias e seus notes
 async function debugOnfleet() {
-  if (!ONFLEET_API_KEY) {
-    return { ok: false, erro: "ONFLEET_API_KEY não configurada" };
+  const key = process.env.ONFLEET_API_KEY || "";
+  // Lista nomes de variáveis de ambiente que contenham ONFLEET (sem expor valores)
+  const envOnfleet = Object.keys(process.env).filter(k => /ONFLEET/i.test(k));
+
+  if (!key) {
+    return {
+      ok: false,
+      erro: "ONFLEET_API_KEY não configurada (lida em runtime)",
+      envVarsComOnfleet: envOnfleet,
+      totalEnvVars: Object.keys(process.env).length,
+    };
   }
 
   const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -279,6 +290,8 @@ async function debugOnfleet() {
     const txt = await resposta.text();
     return { ok: false, erro: `Onfleet HTTP ${resposta.status}`, detalhe: txt.slice(0, 300) };
   }
+  // chave OK
+
 
   const data  = await resposta.json();
   const tasks = Array.isArray(data) ? data : (data.tasks || []);

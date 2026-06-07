@@ -29,11 +29,16 @@ const COMMON_HEADERS = {
   "Referer": "https://ssw.inf.br/2/rastreamento?"
 };
 
+// States Onfleet (campo numérico `state`):
+//   0 = Unassigned  (criada, sem motorista)
+//   1 = Assigned    (atribuída a um motorista)
+//   2 = Active      (em rota / in transit — rastreamento ao vivo)
+//   3 = Completed   (finalizada — sucesso OU falha; ver completionDetails.success)
 const ONFLEET_STATE_MAP = {
-  0: { label: "Aguardando despacho", cor: "warning" },
-  1: { label: "Em rota de entrega",  cor: "info"    },
-  2: { label: "Entregue",            cor: "success" },
-  3: { label: "Falha na entrega",    cor: "danger"  },
+  0: { label: "Pedido recebido",     cor: "warning" },
+  1: { label: "Aguardando saída",    cor: "warning" },
+  2: { label: "Em rota de entrega",  cor: "info"    },
+  3: { label: "Entregue",            cor: "success" },  // refinado por completionDetails
 };
 
 exports.handler = async (event) => {
@@ -135,6 +140,20 @@ async function consultarOnfleet(pedidoRaw) {
 
   const stateInfo = ONFLEET_STATE_MAP[task.state] || { label: "Status desconhecido", cor: "" };
 
+  // Quando a task está completada (state 3), refina entre Entregue e Falha
+  // usando completionDetails.success (true = sucesso, false = falha)
+  let statusLabel = stateInfo.label;
+  let statusCor   = stateInfo.cor;
+  if (task.state === 3) {
+    if (task.completionDetails?.success === false) {
+      statusLabel = "Entrega não concluída";
+      statusCor   = "danger";
+    } else {
+      statusLabel = "Entregue";
+      statusCor   = "success";
+    }
+  }
+
   // Endereço de destino
   const dest = task.destination?.address || {};
   const enderecoParts = [
@@ -146,6 +165,13 @@ async function consultarOnfleet(pedidoRaw) {
 
   const destinatario   = task.recipients?.[0]?.name || "";
   const notasConclusao = task.completionDetails?.notes || "";
+
+  // Tipo de pedido extraído do notes: "Tipo de Orden: VEN" / "DEV"
+  const tipoMatch = (task.notes || "").match(/Tipo de Orden:\s*([A-Z]+)/i);
+  const tipoCod   = tipoMatch ? tipoMatch[1].toUpperCase() : "";
+  const tipoLabel = tipoCod === "DEV" ? "Devolução"
+                  : tipoCod === "VEN" ? "Venda"
+                  : "";
 
   let concluido = "";
   if (task.completionDetails?.time) {
@@ -174,11 +200,14 @@ async function consultarOnfleet(pedidoRaw) {
     nf: pedidoRaw,
     carrier: "ONFLEET",
     statusAtual: {
-      situacao: stateInfo.label,
+      situacao: statusLabel,
       dataHora,
       unidade: endereco,
       descricao: notasConclusao,
     },
+    statusCor,
+    tipoCod,
+    tipoLabel,
     eventos: [],
     remetente: "Luuna",
     destinatario,

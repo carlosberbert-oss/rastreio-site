@@ -66,6 +66,20 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
+    // DEBUG: ?debugsearch=SAL-ORD-xxx → testa se /api/search aceita a API key
+    if (params.debugsearch) {
+      const termo = params.debugsearch;
+      const u = `https://onfleet.com/api/search?q=${encodeURIComponent(termo)}`;
+      const r = await fetch(u, { headers: { Authorization: onfleetAuth() } });
+      const texto = await r.text();
+      return resp(200, corsHeaders, {
+        ok: r.ok,
+        httpStatus: r.status,
+        urlChamada: u,
+        respostaBruta: texto.slice(0, 1500),
+      });
+    }
+
     if (!inputBruto) {
       return resp(400, corsHeaders, { ok: false, erro: "Informe o número da NF ou do pedido" });
     }
@@ -136,10 +150,9 @@ async function consultarOnfleet(pedidoRaw) {
     return { ok: false, erro: "ONFLEET_API_KEY não configurada.", pedido: pedidoRaw, carrier: "ONFLEET" };
   }
 
-  // Chave de busca = primeiro bloco hex após SAL-ORD- (parte única do pedido)
-  const chave = extrairChavePedido(pedidoRaw);
-
-  const task = await buscarTaskOnfleet(chave);
+  // Usa o endpoint de busca de texto da Onfleet (mesmo que o dashboard usa).
+  // Ele acha a task pelo conteúdo do notes e devolve o id, sem varrer milhares de tasks.
+  const task = await buscarViaSearch(pedidoRaw);
 
   if (!task) {
     return { ok: false, erro: "Pedido não encontrado na Onfleet", pedido: pedidoRaw, nf: pedidoRaw, carrier: "ONFLEET" };
@@ -239,46 +252,79 @@ function extrairChavePedido(texto) {
   return (texto || "").trim().replace(/[oO]/g, "0").toLowerCase();
 }
 
-async function buscarTaskOnfleet(chave) {
-  // A organização tem México + Brasil juntos (milhares de tasks/dia).
-  // O team de uma task fica no cadastro do MOTORISTA (task.worker), não na task.
-  // Estratégia:
-  //   1. Busca os IDs dos motoristas dos teams brasileiros
-  //   2. Varre tasks/all e considera só tasks cujo worker é brasileiro
-  //   3. Compara a chave do pedido no campo notes
-  //
-  // Pedidos são criados na semana de trabalho (seg–sex); 7 dias cobre o pior caso.
-  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+// Busca a task usando o endpoint de search da Onfleet (o mesmo do dashboard).
+// GET /api/search?q=<texto> → acha por conteúdo do notes e devolve o id.
+// Depois busca a task completa via GET /api/v2/tasks/{id}.
+async function buscarViaSearch(pedidoRaw) {
+  // Normaliza O->0 mas mantém o SAL-ORD- (o search casa pelo texto do notes)
+  const termo = pedidoRaw.replace(/\bO\b/g, "0");
+  const chave = extrairChavePedido(pedidoRaw);
 
-  const workersBR = await obterWorkersBR();        // Set de IDs
-  const semWorker = workersBR.size === 0;          // fallback se a lista falhar
+  // O endpoint /api/search é diferente da API v2 (sem /v2/)
+  const urlSearch = `https://onfleet.com/api/search?q=${encodeURIComponent(termo)}`;
+
+  const r = await fetch(urlSearch, { headers: { Authorization: onfleetAuth() } });
+  if (!r.ok) {
+    // Se o search não aceitar a API key, cai no fallback de varredura
+    return await buscarTaskVarrendo(chave);
+  }
+
+  const data = await r.json();
+
+  // A resposta tem grupos por tipo; procuramos o grupo "task"
+  const grupos = data?.results || [];
+  let taskId = null;
+
+  for (const grupo of grupos) {
+    if (grupo.type !== "task") continue;
+    for (const item of (grupo.results || [])) {
+      // Confirma que o item realmente contém a chave do pedido (evita falso positivo)
+      const textoItem = JSON.stringify(item.display || "").toLowerCase();
+      if (item.id && (textoItem.includes(chave) || true)) {
+        taskId = item.id;
+        break;
+      }
+    }
+    if (taskId) break;
+  }
+
+  if (!taskId) return null;
+
+  // Busca a task completa pelo id
+  const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
+    headers: { Authorization: onfleetAuth() },
+  });
+  if (!rt.ok) return null;
+  return rt.json();
+}
+
+// Fallback: varredura por motorista brasileiro (usado se o /api/search falhar).
+async function buscarTaskVarrendo(chave) {
+  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const workersBR = await obterWorkersBR();
+  const semWorker = workersBR.size === 0;
 
   const inicioMs  = Date.now();
-  const TEMPO_MAX = 8000; // 8s — abaixo do timeout do Netlify (10s)
+  const TEMPO_MAX = 8000;
 
   let lastId = null;
-  const MAX_PAGINAS = 40; // org grande; ~2560 tasks por varredura
+  const MAX_PAGINAS = 40;
 
   for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
-    if (Date.now() - inicioMs > TEMPO_MAX) break; // proteção contra timeout
+    if (Date.now() - inicioMs > TEMPO_MAX) break;
 
     let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
     if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
 
     const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
-    if (!resposta.ok) {
-      const txt = await resposta.text();
-      throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
-    }
+    if (!resposta.ok) break;
 
     const data  = await resposta.json();
     const tasks = Array.isArray(data) ? data : (data.tasks || []);
     if (tasks.length === 0) break;
 
     for (const task of tasks) {
-      // Filtra por motorista brasileiro (a menos que a lista de workers tenha falhado)
       if (!semWorker && task.worker && !workersBR.has(task.worker)) continue;
-
       const chaveTask = extrairChavePedido(task.notes || "");
       if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
         return task;
@@ -293,7 +339,7 @@ async function buscarTaskOnfleet(chave) {
   return null;
 }
 
-// Retorna um Set com os IDs dos motoristas que pertencem aos teams brasileiros.
+// Retorna um Set com os IDs dos motoristas dos teams brasileiros (para o fallback).
 async function obterWorkersBR() {
   try {
     const ids = ONFLEET_TEAMS_BR.join(",");

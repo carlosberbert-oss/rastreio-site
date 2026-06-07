@@ -66,21 +66,26 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
-    // DEBUG: ?debugtask=1 → mostra os campos de container/team de uma task real
+    // DEBUG: ?debugworkers=1 → lista workers dos teams BR
+    if (params.debugworkers === "1") {
+      const ids = ONFLEET_TEAMS_BR.join(",");
+      const r = await fetch(`${ONFLEET_BASE}/workers?teams=${ids}&filter=name,teams`, { headers: { Authorization: onfleetAuth() } });
+      const workers = await r.json();
+      return resp(200, corsHeaders, {
+        ok: true,
+        totalWorkersBR: Array.isArray(workers) ? workers.length : 0,
+        workers: (Array.isArray(workers) ? workers : []).map(w => ({ id: w.id, name: w.name, teams: w.teams })),
+      });
+    }
+
+    // DEBUG: ?debugtask=1 → todos os campos de UMA task (ver container real)
     if (params.debugtask === "1") {
       const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const r = await fetch(`${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`, { headers: { Authorization: onfleetAuth() } });
       const data = await r.json();
       const tasks = Array.isArray(data) ? data : (data.tasks || []);
-      // Pega as 3 primeiras e mostra campos relacionados a team
-      const amostra = tasks.slice(0, 3).map(t => ({
-        id: t.id,
-        container: t.container,
-        worker: t.worker,
-        metadata: t.metadata,
-        notesPreview: (t.notes || "").slice(0, 60),
-      }));
-      return resp(200, corsHeaders, { ok: true, totalNaPagina: tasks.length, amostra });
+      // Mostra a task INTEIRA (campos completos) da primeira
+      return resp(200, corsHeaders, { ok: true, totalNaPagina: tasks.length, taskCompleta: tasks[0] || null });
     }
 
     // DEBUG: ?debugteams=1 → lista os teams (id + nome)

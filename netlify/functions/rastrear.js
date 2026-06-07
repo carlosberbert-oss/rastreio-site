@@ -54,14 +54,8 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
-    if (!inputBruto && params.debug !== "1") {
+    if (!inputBruto) {
       return resp(400, corsHeaders, { ok: false, erro: "Informe o número da NF ou do pedido" });
-    }
-
-    // ─── Modo DEBUG: ?debug=1 lista as tasks Onfleet com seus notes ──────────
-    if (params.debug === "1") {
-      const dbg = await debugOnfleet();
-      return resp(200, corsHeaders, dbg);
     }
 
     // ─── Modo AUTO ──────────────────────────────────────────────────────────
@@ -126,19 +120,14 @@ function onfleetAuth() {
 }
 
 async function consultarOnfleet(pedidoRaw) {
-  // Normaliza: troca letra O (maiúscula ou minúscula) por zero — erro comum de digitação
-  const pedidoNorm = pedidoRaw.replace(/[oO]/g, "0");
-
-  // Extrai sufixo após SAL-ORD- (aceita hex + possível sufixo como -shipping)
-  // Ex: "SAL-ORD-260602787e4d40-shipping" → sufixo = "260602787e4d40"
-  const m = pedidoNorm.match(/SAL-ORD-([a-f0-9]+)/i);
-  const sufixo = m ? m[1].toLowerCase() : pedidoNorm.toLowerCase();
-
   if (!process.env.ONFLEET_API_KEY) {
     return { ok: false, erro: "ONFLEET_API_KEY não configurada.", pedido: pedidoRaw, carrier: "ONFLEET" };
   }
 
-  const task = await buscarTaskOnfleet(sufixo);
+  // Chave de busca = primeiro bloco hex após SAL-ORD- (parte única do pedido)
+  const chave = extrairChavePedido(pedidoRaw);
+
+  const task = await buscarTaskOnfleet(chave);
 
   if (!task) {
     return { ok: false, erro: "Pedido não encontrado na Onfleet", pedido: pedidoRaw, nf: pedidoRaw, carrier: "ONFLEET" };
@@ -203,118 +192,57 @@ async function consultarOnfleet(pedidoRaw) {
   };
 }
 
-async function buscarTaskOnfleet(sufixo) {
-  // tasks/all não inclui o campo `notes` no resumo.
-  // Estratégia: busca as tasks mais RECENTES primeiro (últimas 24h → 7d → 30d)
-  // e para cada janela faz GET /tasks/:id em lotes pequenos (respeitando rate limit).
-  // Assim pedidos de hoje são achados na primeira página sem paginar.
+// Extrai a chave de busca de um texto que contém o número do pedido.
+// Pega o primeiro bloco alfanumérico após "SAL-ORD-" e normaliza (O->0, lowercase).
+// Ex: "SAL-ORD-2512017411560e-2026-45f8bbde" → "2512017411560e"
+//     "Sales Order-SAL-ORD-2606029b9dfd97-shipping" → "2606029b9dfd97"
+//     "260602787e4d4O" (input sem prefixo) → "260602787e4d40"
+function extrairChavePedido(texto) {
+  const m = (texto || "").match(/SAL-?ORD-([0-9a-zA-Z]+)/i);
+  if (m) return m[1].replace(/[oO]/g, "0").toLowerCase();
+  return (texto || "").trim().replace(/[oO]/g, "0").toLowerCase();
+}
 
-  // Pedidos Onfleet são criados no mesmo dia ou semana de trabalho (seg–sex).
+async function buscarTaskOnfleet(chave) {
+  // O endpoint tasks/all JÁ retorna o campo `notes` no resumo,
+  // então basta varrer a listagem — sem GET individual, sem rate limit.
+  //
+  // Pedidos Onfleet são criados na semana de trabalho (seg–sex).
   // 7 dias cobre o caso mais distante (sexta → segunda seguinte).
   const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const url  = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
 
-  const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+  let lastId = null;
+  const MAX_PAGINAS = 10; // ~640 tasks; cada página é uma chamada só
 
-  if (!resposta.ok) {
-    const txt = await resposta.text();
-    throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
-  }
+  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
+    if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
 
-  const data  = await resposta.json();
-  const tasks = Array.isArray(data) ? data : (data.tasks || []);
+    const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+    if (!resposta.ok) {
+      const txt = await resposta.text();
+      throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
+    }
 
-  if (tasks.length === 0) return null;
+    const data  = await resposta.json();
+    const tasks = Array.isArray(data) ? data : (data.tasks || []);
+    if (tasks.length === 0) break;
 
-  // Tenta no resumo primeiro (caso notes já venha na listagem)
-  for (const task of tasks) {
-    if ((task.notes || "").toLowerCase().includes(sufixo)) return task;
-  }
-
-  // notes não vem no resumo → busca detalhes em lotes de 4 (rate limit ~4 req/s)
-  const BATCH_SIZE  = 4;
-  const BATCH_DELAY = 300; // ms entre lotes
-
-  for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
-    const lote     = tasks.slice(i, i + BATCH_SIZE);
-    const detalhes = await Promise.all(
-      lote.map(t => buscarTaskDetalhada(t.id).catch(() => null))
-    );
-
-    for (const detalhe of detalhes) {
-      if (detalhe && (detalhe.notes || "").toLowerCase().includes(sufixo)) {
-        return detalhe;
+    for (const task of tasks) {
+      const chaveTask = extrairChavePedido(task.notes || "");
+      if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
+        return task;
       }
     }
 
-    if (i + BATCH_SIZE < tasks.length) {
-      await sleep(BATCH_DELAY);
-    }
+    const proximoLastId = Array.isArray(data) ? null : data.lastId;
+    if (!proximoLastId) break;
+    lastId = proximoLastId;
   }
 
   return null;
 }
 
-async function buscarTaskDetalhada(taskId) {
-  const resposta = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
-    headers: { Authorization: onfleetAuth() },
-  });
-  if (!resposta.ok) return null;
-  return resposta.json();
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Função de diagnóstico: lista as tasks dos últimos 7 dias e seus notes
-async function debugOnfleet() {
-  const key = process.env.ONFLEET_API_KEY || "";
-  // Lista nomes de variáveis de ambiente que contenham ONFLEET (sem expor valores)
-  const envOnfleet = Object.keys(process.env).filter(k => /ONFLEET/i.test(k));
-
-  if (!key) {
-    return {
-      ok: false,
-      erro: "ONFLEET_API_KEY não configurada (lida em runtime)",
-      envVarsComOnfleet: envOnfleet,
-      totalEnvVars: Object.keys(process.env).length,
-    };
-  }
-
-  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const url  = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
-
-  const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
-  if (!resposta.ok) {
-    const txt = await resposta.text();
-    return { ok: false, erro: `Onfleet HTTP ${resposta.status}`, detalhe: txt.slice(0, 300) };
-  }
-  // chave OK
-
-
-  const data  = await resposta.json();
-  const tasks = Array.isArray(data) ? data : (data.tasks || []);
-
-  // Pega só as 5 primeiras e busca o detalhe (que tem notes)
-  const amostra = tasks.slice(0, 5);
-  const detalhes = await Promise.all(
-    amostra.map(t => buscarTaskDetalhada(t.id).catch(() => null))
-  );
-
-  return {
-    ok: true,
-    formatoResposta: Array.isArray(data) ? "array" : "objeto-com-tasks",
-    totalTasksNaPrimeiraPagina: tasks.length,
-    temLastId: !Array.isArray(data) && !!data.lastId,
-    resumoTemNotes: amostra.map(t => ({ id: t.id, notesNoResumo: t.notes || null })),
-    notesDoDetalhe: detalhes.map(d => d ? {
-      id: d.id,
-      state: d.state,
-      notes: (d.notes || "").slice(0, 200),
-    } : null),
-  };
-}
 
 // ═══════════════════════════════════════════════════════════════
 //  SSW (Fitlog / Mira)

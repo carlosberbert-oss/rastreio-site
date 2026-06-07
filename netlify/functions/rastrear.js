@@ -22,6 +22,13 @@ const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
 const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
 const ONFLEET_BASE  = "https://onfleet.com/api/v2";
 
+// Teams brasileiros — a busca de pedidos é restrita a estes (ignora México).
+// IDs obtidos via GET /teams.
+const ONFLEET_TEAMS_BR = [
+  "~3FasWs57JwmvFAp~z1UKLAb", // Brasil
+  "NzJc8N3SAWdW8sK2MP7BUeiA", // Inhouse_BR_CPN
+];
+
 const COMMON_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
@@ -249,24 +256,34 @@ function extrairChavePedido(texto) {
 }
 
 async function buscarTaskOnfleet(chave) {
-  // O endpoint tasks/all JÁ retorna o campo `notes` no resumo,
-  // então basta varrer a listagem — sem GET individual, sem rate limit.
+  // A organização tem México + Brasil juntos (milhares de tasks).
+  // Para achar rápido, buscamos SÓ nos teams brasileiros via /teams/{id}/tasks,
+  // que já retorna o campo `notes` no resumo (sem GET individual, sem rate limit).
   //
-  // Pedidos Onfleet são criados na semana de trabalho (seg–sex).
-  // 7 dias cobre o caso mais distante (sexta → segunda seguinte).
+  // Pedidos são criados na semana de trabalho (seg–sex); 7 dias cobre o pior caso.
   const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
+  for (const teamId of ONFLEET_TEAMS_BR) {
+    const task = await buscarNoTeam(teamId, from, chave);
+    if (task) return task;
+  }
+
+  return null;
+}
+
+// Varre as tasks de um team específico procurando a chave no campo notes.
+async function buscarNoTeam(teamId, from, chave) {
   let lastId = null;
-  const MAX_PAGINAS = 10; // ~640 tasks; cada página é uma chamada só
+  const MAX_PAGINAS = 15; // por team
 
   for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
-    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
+    let url = `${ONFLEET_BASE}/teams/${teamId}/tasks?from=${from}`;
     if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
 
     const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
     if (!resposta.ok) {
-      const txt = await resposta.text();
-      throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
+      // Se um team falhar, não derruba a busca toda — apenas pula
+      return null;
     }
 
     const data  = await resposta.json();
@@ -289,63 +306,61 @@ async function buscarTaskOnfleet(chave) {
 }
 
 
-// DEBUG: rastreia um pedido em todas as páginas, reportando onde está
+// DEBUG: rastreia um pedido nos teams BR, reportando onde está
 async function debugFindPedido(pedidoRaw) {
   if (!process.env.ONFLEET_API_KEY) return { ok: false, erro: "sem API key" };
 
   const chaveBusca = extrairChavePedido(pedidoRaw);
   const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
-
-  let lastId = null;
-  let totalVarridas = 0;
-  const paginasInfo = [];
+  const porTeam = [];
   let achado = null;
 
-  for (let pagina = 0; pagina < 30; pagina++) {
-    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
-    if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
+  for (const teamId of ONFLEET_TEAMS_BR) {
+    let lastId = null;
+    let varridas = 0;
 
-    const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
-    if (!resposta.ok) {
-      return { ok: false, erro: `HTTP ${resposta.status}`, pagina };
-    }
+    for (let pagina = 0; pagina < 15; pagina++) {
+      let url = `${ONFLEET_BASE}/teams/${teamId}/tasks?from=${from}`;
+      if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
 
-    const data  = await resposta.json();
-    const tasks = Array.isArray(data) ? data : (data.tasks || []);
-    totalVarridas += tasks.length;
-
-    // Procura nesta página
-    for (const task of tasks) {
-      const chaveTask = extrairChavePedido(task.notes || "");
-      if (chaveTask && (chaveTask === chaveBusca || chaveTask.includes(chaveBusca) || chaveBusca.includes(chaveTask))) {
-        achado = {
-          pagina,
-          id: task.id,
-          state: task.state,
-          chaveTask,
-          notesPreview: (task.notes || "").slice(0, 120),
-          timeCreated: task.timeCreated ? new Date(task.timeCreated).toISOString() : null,
-        };
+      const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+      if (!resposta.ok) {
+        porTeam.push({ teamId, erro: `HTTP ${resposta.status}` });
         break;
       }
+
+      const data  = await resposta.json();
+      const tasks = Array.isArray(data) ? data : (data.tasks || []);
+      varridas += tasks.length;
+
+      for (const task of tasks) {
+        const chaveTask = extrairChavePedido(task.notes || "");
+        if (chaveTask && (chaveTask === chaveBusca || chaveTask.includes(chaveBusca) || chaveBusca.includes(chaveTask))) {
+          achado = {
+            teamId, pagina, id: task.id, state: task.state, chaveTask,
+            notesPreview: (task.notes || "").slice(0, 120),
+            timeCreated: task.timeCreated ? new Date(task.timeCreated).toISOString() : null,
+          };
+          break;
+        }
+      }
+
+      if (achado) break;
+      const proximoLastId = Array.isArray(data) ? null : data.lastId;
+      if (!proximoLastId || tasks.length === 0) break;
+      lastId = proximoLastId;
     }
 
-    paginasInfo.push({ pagina, qtdTasks: tasks.length });
-
+    porTeam.push({ teamId, tasksVarridas: varridas, achou: !!achado });
     if (achado) break;
-
-    const proximoLastId = Array.isArray(data) ? null : data.lastId;
-    if (!proximoLastId || tasks.length === 0) break;
-    lastId = proximoLastId;
   }
 
   return {
     ok: true,
     pedidoBuscado: pedidoRaw,
     chaveBusca,
-    totalTasksVarridas: totalVarridas,
-    totalPaginas: paginasInfo.length,
-    achado: achado || "NÃO ENCONTRADO em nenhuma página",
+    porTeam,
+    achado: achado || "NÃO ENCONTRADO nos teams BR",
   };
 }
 

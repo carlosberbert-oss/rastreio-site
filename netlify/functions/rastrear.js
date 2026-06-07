@@ -66,6 +66,23 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
+    // DEBUG: ?debugtask=1 → mostra os campos de container/team de uma task real
+    if (params.debugtask === "1") {
+      const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const r = await fetch(`${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`, { headers: { Authorization: onfleetAuth() } });
+      const data = await r.json();
+      const tasks = Array.isArray(data) ? data : (data.tasks || []);
+      // Pega as 3 primeiras e mostra campos relacionados a team
+      const amostra = tasks.slice(0, 3).map(t => ({
+        id: t.id,
+        container: t.container,
+        worker: t.worker,
+        metadata: t.metadata,
+        notesPreview: (t.notes || "").slice(0, 60),
+      }));
+      return resp(200, corsHeaders, { ok: true, totalNaPagina: tasks.length, amostra });
+    }
+
     // DEBUG: ?debugteams=1 → lista os teams (id + nome)
     if (params.debugteams === "1") {
       const r = await fetch(`${ONFLEET_BASE}/teams`, { headers: { Authorization: onfleetAuth() } });

@@ -118,9 +118,13 @@ function onfleetAuth() {
 }
 
 async function consultarOnfleet(pedidoRaw) {
-  // Extrai sufixo: "SAL-ORD-260601abc" → "260601abc"; senão usa o input inteiro
-  const m = pedidoRaw.match(/SAL-ORD-([a-f0-9]+)/i);
-  const sufixo = m ? m[1].toLowerCase() : pedidoRaw.toLowerCase();
+  // Normaliza: troca letra O (maiúscula ou minúscula) por zero — erro comum de digitação
+  const pedidoNorm = pedidoRaw.replace(/[oO]/g, "0");
+
+  // Extrai sufixo após SAL-ORD- (aceita hex + possível sufixo como -shipping)
+  // Ex: "SAL-ORD-260602787e4d40-shipping" → sufixo = "260602787e4d40"
+  const m = pedidoNorm.match(/SAL-ORD-([a-f0-9]+)/i);
+  const sufixo = m ? m[1].toLowerCase() : pedidoNorm.toLowerCase();
 
   if (!ONFLEET_API_KEY) {
     return { ok: false, erro: "ONFLEET_API_KEY não configurada.", pedido: pedidoRaw, carrier: "ONFLEET" };

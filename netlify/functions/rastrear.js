@@ -66,44 +66,6 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
-    // DEBUG: ?debugworkers=1 → lista workers dos teams BR
-    if (params.debugworkers === "1") {
-      const ids = ONFLEET_TEAMS_BR.join(",");
-      const r = await fetch(`${ONFLEET_BASE}/workers?teams=${ids}&filter=name,teams`, { headers: { Authorization: onfleetAuth() } });
-      const workers = await r.json();
-      return resp(200, corsHeaders, {
-        ok: true,
-        totalWorkersBR: Array.isArray(workers) ? workers.length : 0,
-        workers: (Array.isArray(workers) ? workers : []).map(w => ({ id: w.id, name: w.name, teams: w.teams })),
-      });
-    }
-
-    // DEBUG: ?debugtask=1 → todos os campos de UMA task (ver container real)
-    if (params.debugtask === "1") {
-      const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const r = await fetch(`${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`, { headers: { Authorization: onfleetAuth() } });
-      const data = await r.json();
-      const tasks = Array.isArray(data) ? data : (data.tasks || []);
-      // Mostra a task INTEIRA (campos completos) da primeira
-      return resp(200, corsHeaders, { ok: true, totalNaPagina: tasks.length, taskCompleta: tasks[0] || null });
-    }
-
-    // DEBUG: ?debugteams=1 → lista os teams (id + nome)
-    if (params.debugteams === "1") {
-      const r = await fetch(`${ONFLEET_BASE}/teams`, { headers: { Authorization: onfleetAuth() } });
-      const teams = await r.json();
-      return resp(200, corsHeaders, {
-        ok: true,
-        teams: (Array.isArray(teams) ? teams : []).map(t => ({ id: t.id, name: t.name })),
-      });
-    }
-
-    // DEBUG: ?debugfind=SAL-ORD-xxx → rastreia o pedido em todas as páginas
-    if (params.debugfind) {
-      const dbg = await debugFindPedido(params.debugfind);
-      return resp(200, corsHeaders, dbg);
-    }
-
     if (!inputBruto) {
       return resp(400, corsHeaders, { ok: false, erro: "Informe o número da NF ou do pedido" });
     }
@@ -278,34 +240,35 @@ function extrairChavePedido(texto) {
 }
 
 async function buscarTaskOnfleet(chave) {
-  // A organização tem México + Brasil juntos (milhares de tasks).
-  // Para achar rápido, buscamos SÓ nos teams brasileiros via /teams/{id}/tasks,
-  // que já retorna o campo `notes` no resumo (sem GET individual, sem rate limit).
+  // A organização tem México + Brasil juntos (milhares de tasks/dia).
+  // O team de uma task fica no cadastro do MOTORISTA (task.worker), não na task.
+  // Estratégia:
+  //   1. Busca os IDs dos motoristas dos teams brasileiros
+  //   2. Varre tasks/all e considera só tasks cujo worker é brasileiro
+  //   3. Compara a chave do pedido no campo notes
   //
   // Pedidos são criados na semana de trabalho (seg–sex); 7 dias cobre o pior caso.
   const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-  for (const teamId of ONFLEET_TEAMS_BR) {
-    const task = await buscarNoTeam(teamId, from, chave);
-    if (task) return task;
-  }
+  const workersBR = await obterWorkersBR();        // Set de IDs
+  const semWorker = workersBR.size === 0;          // fallback se a lista falhar
 
-  return null;
-}
+  const inicioMs  = Date.now();
+  const TEMPO_MAX = 8000; // 8s — abaixo do timeout do Netlify (10s)
 
-// Varre as tasks de um team específico procurando a chave no campo notes.
-async function buscarNoTeam(teamId, from, chave) {
   let lastId = null;
-  const MAX_PAGINAS = 15; // por team
+  const MAX_PAGINAS = 40; // org grande; ~2560 tasks por varredura
 
   for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
-    let url = `${ONFLEET_BASE}/teams/${teamId}/tasks?from=${from}`;
+    if (Date.now() - inicioMs > TEMPO_MAX) break; // proteção contra timeout
+
+    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
     if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
 
     const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
     if (!resposta.ok) {
-      // Se um team falhar, não derruba a busca toda — apenas pula
-      return null;
+      const txt = await resposta.text();
+      throw new Error(`Onfleet HTTP ${resposta.status}: ${txt.slice(0, 200)}`);
     }
 
     const data  = await resposta.json();
@@ -313,6 +276,9 @@ async function buscarNoTeam(teamId, from, chave) {
     if (tasks.length === 0) break;
 
     for (const task of tasks) {
+      // Filtra por motorista brasileiro (a menos que a lista de workers tenha falhado)
+      if (!semWorker && task.worker && !workersBR.has(task.worker)) continue;
+
       const chaveTask = extrairChavePedido(task.notes || "");
       if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
         return task;
@@ -327,64 +293,21 @@ async function buscarNoTeam(teamId, from, chave) {
   return null;
 }
 
-
-// DEBUG: rastreia um pedido nos teams BR, reportando onde está
-async function debugFindPedido(pedidoRaw) {
-  if (!process.env.ONFLEET_API_KEY) return { ok: false, erro: "sem API key" };
-
-  const chaveBusca = extrairChavePedido(pedidoRaw);
-  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const porTeam = [];
-  let achado = null;
-
-  for (const teamId of ONFLEET_TEAMS_BR) {
-    let lastId = null;
-    let varridas = 0;
-
-    for (let pagina = 0; pagina < 15; pagina++) {
-      let url = `${ONFLEET_BASE}/teams/${teamId}/tasks?from=${from}`;
-      if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
-
-      const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
-      if (!resposta.ok) {
-        porTeam.push({ teamId, erro: `HTTP ${resposta.status}` });
-        break;
-      }
-
-      const data  = await resposta.json();
-      const tasks = Array.isArray(data) ? data : (data.tasks || []);
-      varridas += tasks.length;
-
-      for (const task of tasks) {
-        const chaveTask = extrairChavePedido(task.notes || "");
-        if (chaveTask && (chaveTask === chaveBusca || chaveTask.includes(chaveBusca) || chaveBusca.includes(chaveTask))) {
-          achado = {
-            teamId, pagina, id: task.id, state: task.state, chaveTask,
-            notesPreview: (task.notes || "").slice(0, 120),
-            timeCreated: task.timeCreated ? new Date(task.timeCreated).toISOString() : null,
-          };
-          break;
-        }
-      }
-
-      if (achado) break;
-      const proximoLastId = Array.isArray(data) ? null : data.lastId;
-      if (!proximoLastId || tasks.length === 0) break;
-      lastId = proximoLastId;
-    }
-
-    porTeam.push({ teamId, tasksVarridas: varridas, achou: !!achado });
-    if (achado) break;
+// Retorna um Set com os IDs dos motoristas que pertencem aos teams brasileiros.
+async function obterWorkersBR() {
+  try {
+    const ids = ONFLEET_TEAMS_BR.join(",");
+    const r = await fetch(`${ONFLEET_BASE}/workers?teams=${ids}&filter=id`, {
+      headers: { Authorization: onfleetAuth() },
+    });
+    if (!r.ok) return new Set();
+    const workers = await r.json();
+    return new Set((Array.isArray(workers) ? workers : []).map(w => w.id).filter(Boolean));
+  } catch (_) {
+    return new Set();
   }
-
-  return {
-    ok: true,
-    pedidoBuscado: pedidoRaw,
-    chaveBusca,
-    porTeam,
-    achado: achado || "NÃO ENCONTRADO nos teams BR",
-  };
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 //  SSW (Fitlog / Mira)

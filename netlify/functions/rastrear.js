@@ -59,6 +59,12 @@ exports.handler = async (event) => {
     // Aceita tanto &nf= (SSW) quanto &pedido= (Onfleet)
     const inputBruto    = (params.nf || params.pedido || "").trim();
 
+    // DEBUG: ?debugfind=SAL-ORD-xxx → rastreia o pedido em todas as páginas
+    if (params.debugfind) {
+      const dbg = await debugFindPedido(params.debugfind);
+      return resp(200, corsHeaders, dbg);
+    }
+
     if (!inputBruto) {
       return resp(400, corsHeaders, { ok: false, erro: "Informe o número da NF ou do pedido" });
     }
@@ -272,6 +278,66 @@ async function buscarTaskOnfleet(chave) {
   return null;
 }
 
+
+// DEBUG: rastreia um pedido em todas as páginas, reportando onde está
+async function debugFindPedido(pedidoRaw) {
+  if (!process.env.ONFLEET_API_KEY) return { ok: false, erro: "sem API key" };
+
+  const chaveBusca = extrairChavePedido(pedidoRaw);
+  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+  let lastId = null;
+  let totalVarridas = 0;
+  const paginasInfo = [];
+  let achado = null;
+
+  for (let pagina = 0; pagina < 30; pagina++) {
+    let url = `${ONFLEET_BASE}/tasks/all?from=${from}&state=0,1,2,3`;
+    if (lastId) url += `&lastId=${encodeURIComponent(lastId)}`;
+
+    const resposta = await fetch(url, { headers: { Authorization: onfleetAuth() } });
+    if (!resposta.ok) {
+      return { ok: false, erro: `HTTP ${resposta.status}`, pagina };
+    }
+
+    const data  = await resposta.json();
+    const tasks = Array.isArray(data) ? data : (data.tasks || []);
+    totalVarridas += tasks.length;
+
+    // Procura nesta página
+    for (const task of tasks) {
+      const chaveTask = extrairChavePedido(task.notes || "");
+      if (chaveTask && (chaveTask === chaveBusca || chaveTask.includes(chaveBusca) || chaveBusca.includes(chaveTask))) {
+        achado = {
+          pagina,
+          id: task.id,
+          state: task.state,
+          chaveTask,
+          notesPreview: (task.notes || "").slice(0, 120),
+          timeCreated: task.timeCreated ? new Date(task.timeCreated).toISOString() : null,
+        };
+        break;
+      }
+    }
+
+    paginasInfo.push({ pagina, qtdTasks: tasks.length });
+
+    if (achado) break;
+
+    const proximoLastId = Array.isArray(data) ? null : data.lastId;
+    if (!proximoLastId || tasks.length === 0) break;
+    lastId = proximoLastId;
+  }
+
+  return {
+    ok: true,
+    pedidoBuscado: pedidoRaw,
+    chaveBusca,
+    totalTasksVarridas: totalVarridas,
+    totalPaginas: paginasInfo.length,
+    achado: achado || "NÃO ENCONTRADO em nenhuma página",
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  SSW (Fitlog / Mira)

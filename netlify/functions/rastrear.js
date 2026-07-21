@@ -21,6 +21,9 @@ const SENHA_MIRA   = process.env.SENHA_MIRA   || "";
 const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
 const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
 const ONFLEET_BASE  = "https://onfleet.com/api/v2";
+// CDN público onde a Onfleet hospeda fotos/assinatura de comprovante (proof of delivery).
+// Padrão oficial: <CDN>/<uploadId>/800x.png (foto) e <CDN>/<uploadId>/282x.png (assinatura).
+const ONFLEET_CDN   = "https://d15p8tr8p0vffz.cloudfront.net";
 
 // Teams brasileiros — a busca de pedidos é restrita a estes (ignora México).
 // IDs obtidos via GET /teams.
@@ -186,6 +189,16 @@ async function consultarOnfleet(pedidoRaw) {
   const destinatario   = task.recipients?.[0]?.name || "";
   const notasConclusao = task.completionDetails?.notes || "";
 
+  // Comprovante de entrega: fotos e assinatura tiradas pelo motorista na conclusão.
+  const cd = task.completionDetails || {};
+  const photoIds = Array.isArray(cd.photoUploadIds) ? [...cd.photoUploadIds] : [];
+  // photoUploadId (string única) é o campo legado — inclui se ainda não estiver na lista.
+  if (cd.photoUploadId && !photoIds.includes(cd.photoUploadId)) {
+    photoIds.unshift(cd.photoUploadId);
+  }
+  const fotos      = photoIds.filter(Boolean).map((id) => `${ONFLEET_CDN}/${id}/800x.png`);
+  const assinatura = cd.signatureUploadId ? `${ONFLEET_CDN}/${cd.signatureUploadId}/282x.png` : "";
+
   // Tipo de pedido extraído do notes: "Tipo de Orden: VEN" / "DEV"
   const tipoMatch = (task.notes || "").match(/Tipo de Orden:\s*([A-Z]+)/i);
   const tipoCod   = tipoMatch ? tipoMatch[1].toUpperCase() : "";
@@ -238,6 +251,8 @@ async function consultarOnfleet(pedidoRaw) {
     notasConclusao,
     eta,
     dataHora,
+    fotos,
+    assinatura,
   };
 }
 

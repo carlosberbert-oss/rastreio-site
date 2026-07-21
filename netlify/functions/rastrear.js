@@ -193,29 +193,44 @@ async function consultarOnfleet(pedidoRaw) {
   const stateInfo = ONFLEET_STATE_MAP[task.state] || { label: "Status desconhecido", cor: "" };
   const cd = task.completionDetails || {};
 
-  // A Onfleet só marca state=2 (ativa) na task que o motorista está fazendo AGORA;
-  // as demais entregas do dia ficam em state=1 (atribuída) mesmo já em rota. Para
-  // refinar "Em trânsito", checamos se o motorista está em serviço (onDuty).
-  let workerOnDuty = false;
+  // Busca o worker da task (quando atribuída/ativa) para: (a) saber quantas paradas
+  // faltam até esta entrega e (b) apoiar o status. A Onfleet só marca state=2 na task
+  // que o motorista faz AGORA; as demais do dia ficam em state=1 mesmo já em rota.
+  let worker = null;
   if (task.worker && (task.state === 1 || task.state === 2)) {
     try {
       const rw = await fetch(`${ONFLEET_BASE}/workers/${task.worker}?analytics=false`, {
         headers: { Authorization: onfleetAuth() },
       });
-      if (rw.ok) {
-        const w = await rw.json();
-        workerOnDuty = w.onDuty === true;
-      }
-    } catch (_) { /* silencioso — se falhar, usa só o fallback por data */ }
+      if (rw.ok) worker = await rw.json();
+    } catch (_) { /* silencioso */ }
   }
 
-  // "Em trânsito no dia": a janela de entrega já começou (completeAfter no passado)
-  // OU o motorista já está em serviço.
-  const agora = Date.now();
-  const janelaComecou = typeof task.completeAfter === "number" && task.completeAfter <= agora;
-  const emTransito = workerOnDuty || janelaComecou;
+  // Quantas paradas faltam até esta entrega (como no rastreio da Onfleet: "2 stops").
+  // Robusto tanto se a Onfleet mantém quanto se remove as tasks concluídas da rota:
+  // paradasAntes = índice da nossa task − índice da task ativa do motorista.
+  let paradasAntes = null;
+  if (worker && Array.isArray(worker.tasks) && worker.activeTask) {
+    const idx       = worker.tasks.indexOf(task.id);
+    const idxAtiva  = worker.tasks.indexOf(worker.activeTask);
+    if (idx >= 0 && idxAtiva >= 0 && idx >= idxAtiva) {
+      paradasAntes = idx - idxAtiva;
+    }
+  }
 
-  // Status: state 3 refina entre Entregue/Falha; state 2 (ou state 1 já em rota) = Em trânsito.
+  // "Em trânsito" só para entregas previstas para HOJE (fuso de São Paulo). Pedidos
+  // sem previsão de entrega no dia atual continuam como "Aguardando saída".
+  const agora = Date.now();
+  const dataSP = (ms) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const hojeSP = dataSP(agora);
+  const temA = typeof task.completeAfter  === "number";
+  const temB = typeof task.completeBefore === "number";
+  const previstoHoje =
+    (temA && dataSP(task.completeAfter)  === hojeSP) ||
+    (temB && dataSP(task.completeBefore) === hojeSP) ||
+    (temA && temB && task.completeAfter <= agora && agora <= task.completeBefore);
+
+  // Status: state 3 refina Entregue/Falha; state 2 (ativa) ou state 1 previsto p/ hoje = Em trânsito.
   let statusLabel  = stateInfo.label;
   let statusCor    = stateInfo.cor;
   let motivoFalha  = "";   // failureReason traduzido
@@ -230,9 +245,12 @@ async function consultarOnfleet(pedidoRaw) {
       statusLabel = "Entregue";
       statusCor   = "success";
     }
-  } else if (task.state === 2 || (task.state === 1 && emTransito)) {
+  } else if (task.state === 2 || (task.state === 1 && previstoHoje)) {
     statusLabel = "Em trânsito";
     statusCor   = "info";
+  } else {
+    // state 0/1 sem previsão para hoje
+    paradasAntes = null;   // não faz sentido mostrar paradas se não está em rota hoje
   }
 
   // Endereço de destino
@@ -313,6 +331,7 @@ async function consultarOnfleet(pedidoRaw) {
     assinatura,
     motivoFalha,
     falhaNotas,
+    paradasAntes,
   };
 }
 

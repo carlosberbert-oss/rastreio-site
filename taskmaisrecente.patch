@@ -1,0 +1,97 @@
+From df188d5958b72d6fbe989e0c030d76ee4de9f5e6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 21 Jul 2026 20:23:00 +0000
+Subject: [PATCH] Corrige status antigo em pedidos re-despachados (Onfleet)
+
+Quando um pedido falha e sai de novo, a Onfleet cria uma nova task com o mesmo
+codigo SAL-ORD- nas notas. A busca retornava a PRIMEIRA task confirmada, que
+podia ser a tentativa antiga (falha da semana passada) em vez da atual.
+
+Agora, tanto no /api/search quanto na varredura de fallback, coletamos TODAS as
+tasks que confirmam o pedido e devolvemos a mais recente por timeCreated
+(fallback timeLastModified), refletindo a tentativa de entrega atual.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ netlify/functions/rastrear.js | 27 ++++++++++++++++++++++-----
+ 1 file changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/netlify/functions/rastrear.js b/netlify/functions/rastrear.js
+index 857e69a..8b7b843 100644
+--- a/netlify/functions/rastrear.js
++++ b/netlify/functions/rastrear.js
+@@ -346,6 +346,17 @@ function extrairChavePedido(texto) {
+   return (texto || "").trim().replace(/[oO]/g, "0").toLowerCase();
+ }
+ 
++// Dentre várias tasks do mesmo pedido (ex.: falhou e foi re-despachado), devolve
++// a MAIS RECENTE — pela data de criação — para refletir a tentativa atual, e não
++// uma entrega antiga.
++function maisRecente(tasks) {
++  return (tasks || []).reduce((melhor, t) => {
++    const tc = t.timeCreated || t.timeLastModified || 0;
++    const bc = melhor ? (melhor.timeCreated || melhor.timeLastModified || 0) : -1;
++    return tc >= bc ? t : melhor;
++  }, null);
++}
++
+ // Busca a task usando o endpoint de search da Onfleet (o mesmo do dashboard).
+ // GET /api/search?q=<texto> → acha por conteúdo do notes e devolve o id.
+ // Depois busca a task completa via GET /api/v2/tasks/{id}.
+@@ -376,8 +387,9 @@ async function buscarViaSearch(pedidoRaw) {
+     }
+   }
+ 
+-  // Confirma pelo campo `notes` (autoritativo) qual das tasks encontradas é o
+-  // pedido de fato — evita devolver a entrega de outro cliente por falso positivo.
++  // Confirma pelo campo `notes` (autoritativo) quais tasks são o pedido de fato
++  // (evita falso positivo) e coleta TODAS — um pedido re-despachado tem mais de uma.
++  const confirmadas = [];
+   for (const taskId of taskIds) {
+     const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
+       headers: { Authorization: onfleetAuth() },
+@@ -386,10 +398,13 @@ async function buscarViaSearch(pedidoRaw) {
+     const task = await rt.json();
+     const chaveTask = extrairChavePedido(task.notes || "");
+     if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
+-      return task;
++      confirmadas.push(task);
+     }
+   }
+ 
++  // Devolve a tentativa mais recente (não uma entrega antiga que falhou).
++  if (confirmadas.length) return maisRecente(confirmadas);
++
+   // Search não confirmou nenhuma task → cai no fallback de varredura por motorista BR.
+   return await buscarTaskVarrendo(chave);
+ }
+@@ -405,6 +420,7 @@ async function buscarTaskVarrendo(chave) {
+ 
+   let lastId = null;
+   const MAX_PAGINAS = 40;
++  const encontradas = [];
+ 
+   for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+     if (Date.now() - inicioMs > TEMPO_MAX) break;
+@@ -423,7 +439,7 @@ async function buscarTaskVarrendo(chave) {
+       if (!semWorker && task.worker && !workersBR.has(task.worker)) continue;
+       const chaveTask = extrairChavePedido(task.notes || "");
+       if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
+-        return task;
++        encontradas.push(task);   // coleta todas; um pedido re-despachado tem mais de uma
+       }
+     }
+ 
+@@ -432,7 +448,8 @@ async function buscarTaskVarrendo(chave) {
+     lastId = proximoLastId;
+   }
+ 
+-  return null;
++  // Devolve a tentativa mais recente (não uma entrega antiga que falhou).
++  return encontradas.length ? maisRecente(encontradas) : null;
+ }
+ 
+ // Retorna um Set com os IDs dos motoristas dos teams brasileiros (para o fallback).
+-- 
+2.43.0
+

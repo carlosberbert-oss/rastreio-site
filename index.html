@@ -493,9 +493,12 @@
         : "Procurando NF nas transportadoras…";
 
     try {
-      // Para Onfleet: normaliza letra O → zero (erro comum de digitação)
+      // Para Onfleet: normaliza letra O → zero (erro comum de digitação),
+      // mas SÓ na parte do código após "SAL-ORD-" — nunca no próprio prefixo,
+      // senão "SAL-ORD-" viraria "SAL-0RD-" e a busca na Onfleet não casaria.
       const inputNorm = tipo === "onfleet"
-        ? inputRaw.replace(/[oO]/g, "0")
+        ? inputRaw.replace(/^(.*?SAL-?ORD-)?(.*)$/i,
+            (_, prefixo, resto) => (prefixo || "") + resto.replace(/[oO]/g, "0"))
         : inputRaw;
 
       // Constrói a URL: se for onfleet passa &pedido=, senão &nf=

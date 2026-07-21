@@ -273,29 +273,31 @@ async function buscarViaSearch(pedidoRaw) {
 
   // A resposta tem grupos por tipo; procuramos o grupo "task"
   const grupos = data?.results || [];
-  let taskId = null;
+  const taskIds = [];
 
   for (const grupo of grupos) {
     if (grupo.type !== "task") continue;
     for (const item of (grupo.results || [])) {
-      // Confirma que o item realmente contém a chave do pedido (evita falso positivo)
-      const textoItem = JSON.stringify(item.display || "").toLowerCase();
-      if (item.id && (textoItem.includes(chave) || true)) {
-        taskId = item.id;
-        break;
-      }
+      if (item.id) taskIds.push(item.id);
     }
-    if (taskId) break;
   }
 
-  if (!taskId) return null;
+  // Confirma pelo campo `notes` (autoritativo) qual das tasks encontradas é o
+  // pedido de fato — evita devolver a entrega de outro cliente por falso positivo.
+  for (const taskId of taskIds) {
+    const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
+      headers: { Authorization: onfleetAuth() },
+    });
+    if (!rt.ok) continue;
+    const task = await rt.json();
+    const chaveTask = extrairChavePedido(task.notes || "");
+    if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
+      return task;
+    }
+  }
 
-  // Busca a task completa pelo id
-  const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
-    headers: { Authorization: onfleetAuth() },
-  });
-  if (!rt.ok) return null;
-  return rt.json();
+  // Search não confirmou nenhuma task → cai no fallback de varredura por motorista BR.
+  return await buscarTaskVarrendo(chave);
 }
 
 // Fallback: varredura por motorista brasileiro (usado se o /api/search falhar).

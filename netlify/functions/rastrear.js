@@ -46,10 +46,39 @@ const COMMON_HEADERS = {
 //   3 = Completed   (finalizada — sucesso OU falha; ver completionDetails.success)
 const ONFLEET_STATE_MAP = {
   0: { label: "Pedido recebido",     cor: "warning" },
-  1: { label: "Aguardando saída",    cor: "warning" },
-  2: { label: "Em rota de entrega",  cor: "info"    },
+  1: { label: "Aguardando saída",    cor: "warning" },  // refinado p/ "Em trânsito" se já em rota
+  2: { label: "Em trânsito",         cor: "info"    },
   3: { label: "Entregue",            cor: "success" },  // refinado por completionDetails
 };
+
+// Motivos de falha da Onfleet (completionDetails.failureReason). Cada organização
+// pode ter códigos próprios — aqui vêm em espanhol (operação MX). Traduzimos os
+// conhecidos e, para os demais, humanizamos o código (ex.: FOO_BAR → "Foo bar").
+const FALHA_MAP = {
+  CLIENTE_NO_DISPONIBLE:   "Cliente não disponível",
+  CLIENTE_AUSENTE:         "Cliente ausente",
+  NADIE_EN_DOMICILIO:      "Ninguém no local",
+  DIRECCION_INCORRECTA:    "Endereço incorreto",
+  DIRECCION_NO_ENCONTRADA: "Endereço não localizado",
+  CLIENTE_RECHAZA:         "Cliente recusou a entrega",
+  PEDIDO_RECHAZADO:        "Pedido recusado",
+  ZONA_PELIGROSA:          "Zona de risco / acesso restrito",
+  FUERA_DE_HORARIO:        "Fora do horário de entrega",
+  // Códigos padrão da Onfleet (inglês), caso apareçam:
+  UNABLE_TO_LOCATE:        "Endereço não localizado",
+  RECIPIENT_UNAVAILABLE:   "Destinatário ausente",
+  CUSTOMER_UNAVAILABLE:    "Cliente ausente",
+  CANCELLED_BY_RECIPIENT:  "Cancelado pelo destinatário",
+  WRONG_ADDRESS:           "Endereço incorreto",
+};
+
+function traduzirFalha(reason) {
+  if (!reason || reason === "NONE") return "";
+  if (FALHA_MAP[reason]) return FALHA_MAP[reason];
+  // Código desconhecido/custom: SNAKE_CASE → "Snake case"
+  const s = String(reason).replace(/_/g, " ").trim().toLowerCase();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+}
 
 exports.handler = async (event) => {
   const corsHeaders = {
@@ -162,19 +191,48 @@ async function consultarOnfleet(pedidoRaw) {
   }
 
   const stateInfo = ONFLEET_STATE_MAP[task.state] || { label: "Status desconhecido", cor: "" };
+  const cd = task.completionDetails || {};
 
-  // Quando a task está completada (state 3), refina entre Entregue e Falha
-  // usando completionDetails.success (true = sucesso, false = falha)
-  let statusLabel = stateInfo.label;
-  let statusCor   = stateInfo.cor;
+  // A Onfleet só marca state=2 (ativa) na task que o motorista está fazendo AGORA;
+  // as demais entregas do dia ficam em state=1 (atribuída) mesmo já em rota. Para
+  // refinar "Em trânsito", checamos se o motorista está em serviço (onDuty).
+  let workerOnDuty = false;
+  if (task.worker && (task.state === 1 || task.state === 2)) {
+    try {
+      const rw = await fetch(`${ONFLEET_BASE}/workers/${task.worker}?analytics=false`, {
+        headers: { Authorization: onfleetAuth() },
+      });
+      if (rw.ok) {
+        const w = await rw.json();
+        workerOnDuty = w.onDuty === true;
+      }
+    } catch (_) { /* silencioso — se falhar, usa só o fallback por data */ }
+  }
+
+  // "Em trânsito no dia": a janela de entrega já começou (completeAfter no passado)
+  // OU o motorista já está em serviço.
+  const agora = Date.now();
+  const janelaComecou = typeof task.completeAfter === "number" && task.completeAfter <= agora;
+  const emTransito = workerOnDuty || janelaComecou;
+
+  // Status: state 3 refina entre Entregue/Falha; state 2 (ou state 1 já em rota) = Em trânsito.
+  let statusLabel  = stateInfo.label;
+  let statusCor    = stateInfo.cor;
+  let motivoFalha  = "";   // failureReason traduzido
+  let falhaNotas   = "";   // failureNotes (texto livre do motorista)
   if (task.state === 3) {
-    if (task.completionDetails?.success === false) {
+    if (cd.success === false) {
       statusLabel = "Entrega não concluída";
       statusCor   = "danger";
+      motivoFalha = traduzirFalha(cd.failureReason);
+      falhaNotas  = cd.failureNotes || "";
     } else {
       statusLabel = "Entregue";
       statusCor   = "success";
     }
+  } else if (task.state === 2 || (task.state === 1 && emTransito)) {
+    statusLabel = "Em trânsito";
+    statusCor   = "info";
   }
 
   // Endereço de destino
@@ -190,7 +248,6 @@ async function consultarOnfleet(pedidoRaw) {
   const notasConclusao = task.completionDetails?.notes || "";
 
   // Comprovante de entrega: fotos e assinatura tiradas pelo motorista na conclusão.
-  const cd = task.completionDetails || {};
   const photoIds = Array.isArray(cd.photoUploadIds) ? [...cd.photoUploadIds] : [];
   // photoUploadId (string única) é o campo legado — inclui se ainda não estiver na lista.
   if (cd.photoUploadId && !photoIds.includes(cd.photoUploadId)) {
@@ -212,10 +269,12 @@ async function consultarOnfleet(pedidoRaw) {
       .toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   }
 
-  let eta = "";
-  if (task.eta) {
-    eta = new Date(task.eta * 1000)
-      .toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  // Data de entrega AGENDADA (janela completeAfter/completeBefore), só a data — sem horário estimado.
+  let dataAgendada = "";
+  const agendadoMs = task.completeAfter || task.completeBefore || null;
+  if (agendadoMs) {
+    dataAgendada = new Date(agendadoMs)
+      .toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
   }
 
   let dataHora = "";
@@ -244,15 +303,16 @@ async function consultarOnfleet(pedidoRaw) {
     eventos: [],
     remetente: "Luuna",
     destinatario,
-    previsao: eta || concluido || "",
+    previsao: task.state === 3 ? (concluido || dataAgendada) : dataAgendada,
     trackingUrl: task.trackingURL || "",
     endereco,
     concluido,
     notasConclusao,
-    eta,
     dataHora,
     fotos,
     assinatura,
+    motivoFalha,
+    falhaNotas,
   };
 }
 

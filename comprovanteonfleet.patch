@@ -1,0 +1,187 @@
+From cd84afdb92b55be7890af70f21f735152309d304 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 21 Jul 2026 18:45:30 +0000
+Subject: [PATCH] Adiciona comprovante de entrega Onfleet (fotos + assinatura)
+
+As fotos e a assinatura tiradas pelo motorista na conclusao ficam em
+task.completionDetails (photoUploadIds / photoUploadId / signatureUploadId).
+O backend agora monta as URLs publicas no CDN da Onfleet e devolve nos campos
+`fotos` e `assinatura`; o front-end exibe uma galeria "Comprovante de entrega"
+com as miniaturas e a assinatura, com lightbox para ampliar.
+
+- rastrear.js: extrai photoUploadIds/photoUploadId/signatureUploadId e monta as
+  URLs https://d15p8tr8p0vffz.cloudfront.net/<id>/800x.png (foto) e /282x.png (assinatura)
+- index.html: secao de comprovante com grid de fotos, assinatura e lightbox;
+  imagens que nao carregam sao removidas automaticamente
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ index.html                    | 83 +++++++++++++++++++++++++++++++++++
+ netlify/functions/rastrear.js | 15 +++++++
+ 2 files changed, 98 insertions(+)
+
+diff --git a/index.html b/index.html
+index e6a2b4f..e1e4cbf 100644
+--- a/index.html
++++ b/index.html
+@@ -249,6 +249,28 @@
+   }
+   .onfleet-addr svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; color: var(--onfleet); }
+ 
++  /* Comprovante de entrega Onfleet (fotos + assinatura) */
++  .onfleet-proof { margin-top: 18px; padding: 16px 18px; background: rgba(107,63,160,0.06);
++    border: 1px solid rgba(107,63,160,0.14); border-radius: 13px; }
++  .proof-title { font-size: 12px; text-transform: uppercase; color: var(--fg-3);
++    letter-spacing: 0.06em; font-weight: 600; margin-bottom: 14px; }
++  .proof-fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
++  .proof-fotos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px;
++    border: 1px solid var(--divider); cursor: zoom-in; background: var(--bg-3);
++    transition: transform .18s var(--ease), box-shadow .18s var(--ease); }
++  .proof-fotos img:hover { transform: scale(1.03); box-shadow: var(--shadow); }
++  .proof-assinatura { margin-top: 16px; }
++  .proof-sub { font-size: 11px; text-transform: uppercase; color: var(--fg-3);
++    letter-spacing: 0.05em; font-weight: 600; margin-bottom: 8px; }
++  .proof-assinatura img { max-width: 220px; width: 100%; border-radius: 10px;
++    border: 1px solid var(--divider); background: #fff; cursor: zoom-in; }
++
++  /* Lightbox (ampliar comprovante) */
++  .lightbox { position: fixed; inset: 0; z-index: 999; display: flex; align-items: center;
++    justify-content: center; padding: 24px; background: rgba(11,34,57,0.82);
++    backdrop-filter: blur(3px); cursor: zoom-out; animation: pop 220ms var(--ease-out); }
++  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: var(--shadow-lg); }
++
+   .error-card { background: rgba(214,69,69,0.06); border: 1px solid rgba(214,69,69,0.26); border-radius: 14px; padding: 18px 20px; color: var(--danger); font-size: 14px; line-height: 1.5; font-weight: 500; margin-top: 24px; display: none; }
+   .error-card.visible { display: block; animation: pop 320ms var(--ease-out); }
+ 
+@@ -400,6 +422,16 @@
+         <span id="onfleetAddrText"></span>
+       </div>
+ 
++      <!-- Comprovante de entrega Onfleet (fotos + assinatura do motorista) -->
++      <div id="onfleetProof" class="onfleet-proof" style="display:none;">
++        <div class="proof-title">Comprovante de entrega</div>
++        <div id="proofFotos" class="proof-fotos"></div>
++        <div id="proofAssinatura" class="proof-assinatura" style="display:none;">
++          <div class="proof-sub">Assinatura do recebedor</div>
++          <img id="proofAssinaturaImg" alt="Assinatura do recebedor" />
++        </div>
++      </div>
++
+       <!-- Botão comprovante SSW -->
+       <a id="btnComprovante" href="#" target="_blank" rel="noopener" class="btn-comprovante" style="display: none;">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+@@ -440,6 +472,11 @@
+ 
+ </div>
+ 
++<!-- Lightbox para ampliar fotos/assinatura do comprovante -->
++<div id="lightbox" class="lightbox" style="display:none;" onclick="fecharLightbox()">
++  <img id="lightboxImg" alt="Comprovante ampliado" />
++</div>
++
+ <script>
+   /* ── Intro ── */
+   (function intro(){
+@@ -575,6 +612,37 @@
+       addrEl.style.display = "none";
+     }
+ 
++    // Comprovante de entrega Onfleet (fotos + assinatura)
++    const proofEl    = document.getElementById("onfleetProof");
++    const fotosEl    = document.getElementById("proofFotos");
++    const assEl      = document.getElementById("proofAssinatura");
++    const fotos      = (ehOnfleet && Array.isArray(data.fotos)) ? data.fotos : [];
++    const assinatura = ehOnfleet ? (data.assinatura || "") : "";
++
++    fotosEl.innerHTML = "";
++    fotos.forEach((url, i) => {
++      const img = document.createElement("img");
++      img.src = url;
++      img.alt = "Foto da entrega " + (i + 1);
++      img.loading = "lazy";
++      img.addEventListener("click", () => abrirLightbox(url));
++      // Se o id for inválido/expirado e a imagem não carregar, remove do grid.
++      img.addEventListener("error", () => img.remove());
++      fotosEl.appendChild(img);
++    });
++
++    if (assinatura) {
++      const assImg = document.getElementById("proofAssinaturaImg");
++      assImg.src = assinatura;
++      assImg.onclick = () => abrirLightbox(assinatura);
++      assImg.onerror = () => { assEl.style.display = "none"; };
++      assEl.style.display = "";
++    } else {
++      assEl.style.display = "none";
++    }
++
++    proofEl.style.display = (fotos.length || assinatura) ? "" : "none";
++
+     // Botão comprovante SSW
+     const btnComp = document.getElementById("btnComprovante");
+     if (!ehOnfleet && data.comprovanteUrl) {
+@@ -623,6 +691,21 @@
+     r.classList.remove("visible"); void r.offsetWidth; r.classList.add("visible");
+   }
+ 
++  function abrirLightbox(url) {
++    document.getElementById("lightboxImg").src = url;
++    document.getElementById("lightbox").style.display = "flex";
++  }
++  function fecharLightbox() {
++    document.getElementById("lightbox").style.display = "none";
++    document.getElementById("lightboxImg").src = "";
++  }
++  document.addEventListener("keydown", (e) => {
++    if (e.key === "Escape" &&
++        document.getElementById("lightbox").style.display !== "none") {
++      fecharLightbox();
++    }
++  });
++
+   function classeDoStatus(s, carrier) {
+     // Onfleet usa mapeamento próprio pelo texto do status
+     if (carrier === "ONFLEET") {
+diff --git a/netlify/functions/rastrear.js b/netlify/functions/rastrear.js
+index 05e6c39..8b3e0f8 100644
+--- a/netlify/functions/rastrear.js
++++ b/netlify/functions/rastrear.js
+@@ -21,6 +21,9 @@ const SENHA_MIRA   = process.env.SENHA_MIRA   || "";
+ const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
+ const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
+ const ONFLEET_BASE  = "https://onfleet.com/api/v2";
++// CDN público onde a Onfleet hospeda fotos/assinatura de comprovante (proof of delivery).
++// Padrão oficial: <CDN>/<uploadId>/800x.png (foto) e <CDN>/<uploadId>/282x.png (assinatura).
++const ONFLEET_CDN   = "https://d15p8tr8p0vffz.cloudfront.net";
+ 
+ // Teams brasileiros — a busca de pedidos é restrita a estes (ignora México).
+ // IDs obtidos via GET /teams.
+@@ -186,6 +189,16 @@ async function consultarOnfleet(pedidoRaw) {
+   const destinatario   = task.recipients?.[0]?.name || "";
+   const notasConclusao = task.completionDetails?.notes || "";
+ 
++  // Comprovante de entrega: fotos e assinatura tiradas pelo motorista na conclusão.
++  const cd = task.completionDetails || {};
++  const photoIds = Array.isArray(cd.photoUploadIds) ? [...cd.photoUploadIds] : [];
++  // photoUploadId (string única) é o campo legado — inclui se ainda não estiver na lista.
++  if (cd.photoUploadId && !photoIds.includes(cd.photoUploadId)) {
++    photoIds.unshift(cd.photoUploadId);
++  }
++  const fotos      = photoIds.filter(Boolean).map((id) => `${ONFLEET_CDN}/${id}/800x.png`);
++  const assinatura = cd.signatureUploadId ? `${ONFLEET_CDN}/${cd.signatureUploadId}/282x.png` : "";
++
+   // Tipo de pedido extraído do notes: "Tipo de Orden: VEN" / "DEV"
+   const tipoMatch = (task.notes || "").match(/Tipo de Orden:\s*([A-Z]+)/i);
+   const tipoCod   = tipoMatch ? tipoMatch[1].toUpperCase() : "";
+@@ -238,6 +251,8 @@ async function consultarOnfleet(pedidoRaw) {
+     notasConclusao,
+     eta,
+     dataHora,
++    fotos,
++    assinatura,
+   };
+ }
+ 
+-- 
+2.43.0
+

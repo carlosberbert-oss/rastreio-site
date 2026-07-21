@@ -1,0 +1,96 @@
+From f0fb29cb25880f29dc0ca9ebe193bb1a40214d55 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 21 Jul 2026 18:24:33 +0000
+Subject: [PATCH] Corrige rastreio Onfleet: normalizacao O->0 corrompia prefixo
+ SAL-ORD-
+
+O front-end aplicava replace(/[oO]/g,"0") em toda a string do codigo,
+transformando "SAL-ORD-..." em "SAL-0RD-...". Com isso a busca na Onfleet
+(que casa pelo texto do notes "SAL-ORD-...") nunca encontrava o pedido e
+todo rastreio digitado no formato sugerido pela UI retornava "nao encontrado".
+
+- index.html: normaliza O->0 apenas na parte apos "SAL-ORD-", preservando o prefixo
+- rastrear.js: remove o check "|| true" que aceitava qualquer resultado do search
+  sem confirmar; agora valida pela chave no campo notes (autoritativo) e cai no
+  fallback de varredura quando o search nao confirma
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_015R7wmPifTXuDWGV7CnVWKT
+---
+ index.html                    |  7 +++++--
+ netlify/functions/rastrear.js | 32 +++++++++++++++++---------------
+ 2 files changed, 22 insertions(+), 17 deletions(-)
+
+diff --git a/index.html b/index.html
+index fe5acd9..e6a2b4f 100644
+--- a/index.html
++++ b/index.html
+@@ -493,9 +493,12 @@
+         : "Procurando NF nas transportadoras…";
+ 
+     try {
+-      // Para Onfleet: normaliza letra O → zero (erro comum de digitação)
++      // Para Onfleet: normaliza letra O → zero (erro comum de digitação),
++      // mas SÓ na parte do código após "SAL-ORD-" — nunca no próprio prefixo,
++      // senão "SAL-ORD-" viraria "SAL-0RD-" e a busca na Onfleet não casaria.
+       const inputNorm = tipo === "onfleet"
+-        ? inputRaw.replace(/[oO]/g, "0")
++        ? inputRaw.replace(/^(.*?SAL-?ORD-)?(.*)$/i,
++            (_, prefixo, resto) => (prefixo || "") + resto.replace(/[oO]/g, "0"))
+         : inputRaw;
+ 
+       // Constrói a URL: se for onfleet passa &pedido=, senão &nf=
+diff --git a/netlify/functions/rastrear.js b/netlify/functions/rastrear.js
+index 05c5934..05e6c39 100644
+--- a/netlify/functions/rastrear.js
++++ b/netlify/functions/rastrear.js
+@@ -273,29 +273,31 @@ async function buscarViaSearch(pedidoRaw) {
+ 
+   // A resposta tem grupos por tipo; procuramos o grupo "task"
+   const grupos = data?.results || [];
+-  let taskId = null;
++  const taskIds = [];
+ 
+   for (const grupo of grupos) {
+     if (grupo.type !== "task") continue;
+     for (const item of (grupo.results || [])) {
+-      // Confirma que o item realmente contém a chave do pedido (evita falso positivo)
+-      const textoItem = JSON.stringify(item.display || "").toLowerCase();
+-      if (item.id && (textoItem.includes(chave) || true)) {
+-        taskId = item.id;
+-        break;
+-      }
++      if (item.id) taskIds.push(item.id);
+     }
+-    if (taskId) break;
+   }
+ 
+-  if (!taskId) return null;
++  // Confirma pelo campo `notes` (autoritativo) qual das tasks encontradas é o
++  // pedido de fato — evita devolver a entrega de outro cliente por falso positivo.
++  for (const taskId of taskIds) {
++    const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
++      headers: { Authorization: onfleetAuth() },
++    });
++    if (!rt.ok) continue;
++    const task = await rt.json();
++    const chaveTask = extrairChavePedido(task.notes || "");
++    if (chaveTask && (chaveTask === chave || chaveTask.includes(chave) || chave.includes(chaveTask))) {
++      return task;
++    }
++  }
+ 
+-  // Busca a task completa pelo id
+-  const rt = await fetch(`${ONFLEET_BASE}/tasks/${taskId}`, {
+-    headers: { Authorization: onfleetAuth() },
+-  });
+-  if (!rt.ok) return null;
+-  return rt.json();
++  // Search não confirmou nenhuma task → cai no fallback de varredura por motorista BR.
++  return await buscarTaskVarrendo(chave);
+ }
+ 
+ // Fallback: varredura por motorista brasileiro (usado se o /api/search falhar).
+-- 
+2.43.0
+

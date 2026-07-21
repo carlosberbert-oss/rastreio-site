@@ -1,0 +1,135 @@
+From b27b305df9ba54258eeb34788b73aa328e8bb886 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 21 Jul 2026 19:03:01 +0000
+Subject: [PATCH] Refina status "Em transito" e mostra data de entrega agendada
+ (Onfleet)
+
+- Status: a Onfleet so marca state=2 (ativa) na task atual do motorista; as
+  demais entregas do dia ficam em state=1 e apareciam como "Aguardando saida".
+  Agora, se o motorista esta em servico (worker.onDuty) OU a janela de entrega
+  ja comecou (completeAfter no passado), o status vira "Em transito". State=2
+  tambem passa a exibir "Em transito" (antes "Em rota de entrega").
+- Data de entrega: passa a exibir a data AGENDADA (completeAfter/completeBefore,
+  em ms), sem horario estimado (ETA removido). Tile renomeado para "Data de entrega".
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ index.html                    |  6 ++---
+ netlify/functions/rastrear.js | 45 +++++++++++++++++++++++++++--------
+ 2 files changed, 38 insertions(+), 13 deletions(-)
+
+diff --git a/index.html b/index.html
+index 064d369..fecf850 100644
+--- a/index.html
++++ b/index.html
+@@ -421,7 +421,7 @@
+           <div class="v" id="resDataHora">—</div>
+         </div>
+         <div class="info-tile">
+-          <div class="k">Previsão de entrega</div>
++          <div class="k">Data de entrega</div>
+           <div class="v" id="resPrevisao">—</div>
+         </div>
+         <div class="info-tile full" id="tileRemetente">
+@@ -746,8 +746,8 @@
+     if (carrier === "ONFLEET") {
+       const u = (s || "").toUpperCase();
+       if (/ENTREGUE/.test(u))  return "success";
+-      if (/ROTA/.test(u))      return "info";
+-      if (/FALHA/.test(u))     return "danger";
++      if (/ROTA|TR[AÂ]NSITO/.test(u)) return "info";
++      if (/FALHA|N[AÃ]O CONCLU/.test(u)) return "danger";
+       if (/AGUARDANDO/.test(u)) return "warning";
+       return "";
+     }
+diff --git a/netlify/functions/rastrear.js b/netlify/functions/rastrear.js
+index a2c8767..36ca52b 100644
+--- a/netlify/functions/rastrear.js
++++ b/netlify/functions/rastrear.js
+@@ -46,8 +46,8 @@ const COMMON_HEADERS = {
+ //   3 = Completed   (finalizada — sucesso OU falha; ver completionDetails.success)
+ const ONFLEET_STATE_MAP = {
+   0: { label: "Pedido recebido",     cor: "warning" },
+-  1: { label: "Aguardando saída",    cor: "warning" },
+-  2: { label: "Em rota de entrega",  cor: "info"    },
++  1: { label: "Aguardando saída",    cor: "warning" },  // refinado p/ "Em trânsito" se já em rota
++  2: { label: "Em trânsito",         cor: "info"    },
+   3: { label: "Entregue",            cor: "success" },  // refinado por completionDetails
+ };
+ 
+@@ -193,8 +193,29 @@ async function consultarOnfleet(pedidoRaw) {
+   const stateInfo = ONFLEET_STATE_MAP[task.state] || { label: "Status desconhecido", cor: "" };
+   const cd = task.completionDetails || {};
+ 
+-  // Quando a task está completada (state 3), refina entre Entregue e Falha
+-  // usando completionDetails.success (true = sucesso, false = falha)
++  // A Onfleet só marca state=2 (ativa) na task que o motorista está fazendo AGORA;
++  // as demais entregas do dia ficam em state=1 (atribuída) mesmo já em rota. Para
++  // refinar "Em trânsito", checamos se o motorista está em serviço (onDuty).
++  let workerOnDuty = false;
++  if (task.worker && (task.state === 1 || task.state === 2)) {
++    try {
++      const rw = await fetch(`${ONFLEET_BASE}/workers/${task.worker}?analytics=false`, {
++        headers: { Authorization: onfleetAuth() },
++      });
++      if (rw.ok) {
++        const w = await rw.json();
++        workerOnDuty = w.onDuty === true;
++      }
++    } catch (_) { /* silencioso — se falhar, usa só o fallback por data */ }
++  }
++
++  // "Em trânsito no dia": a janela de entrega já começou (completeAfter no passado)
++  // OU o motorista já está em serviço.
++  const agora = Date.now();
++  const janelaComecou = typeof task.completeAfter === "number" && task.completeAfter <= agora;
++  const emTransito = workerOnDuty || janelaComecou;
++
++  // Status: state 3 refina entre Entregue/Falha; state 2 (ou state 1 já em rota) = Em trânsito.
+   let statusLabel  = stateInfo.label;
+   let statusCor    = stateInfo.cor;
+   let motivoFalha  = "";   // failureReason traduzido
+@@ -209,6 +230,9 @@ async function consultarOnfleet(pedidoRaw) {
+       statusLabel = "Entregue";
+       statusCor   = "success";
+     }
++  } else if (task.state === 2 || (task.state === 1 && emTransito)) {
++    statusLabel = "Em trânsito";
++    statusCor   = "info";
+   }
+ 
+   // Endereço de destino
+@@ -245,10 +269,12 @@ async function consultarOnfleet(pedidoRaw) {
+       .toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+   }
+ 
+-  let eta = "";
+-  if (task.eta) {
+-    eta = new Date(task.eta * 1000)
+-      .toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
++  // Data de entrega AGENDADA (janela completeAfter/completeBefore), só a data — sem horário estimado.
++  let dataAgendada = "";
++  const agendadoMs = task.completeAfter || task.completeBefore || null;
++  if (agendadoMs) {
++    dataAgendada = new Date(agendadoMs)
++      .toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+   }
+ 
+   let dataHora = "";
+@@ -277,12 +303,11 @@ async function consultarOnfleet(pedidoRaw) {
+     eventos: [],
+     remetente: "Luuna",
+     destinatario,
+-    previsao: eta || concluido || "",
++    previsao: task.state === 3 ? (concluido || dataAgendada) : dataAgendada,
+     trackingUrl: task.trackingURL || "",
+     endereco,
+     concluido,
+     notasConclusao,
+-    eta,
+     dataHora,
+     fotos,
+     assinatura,
+-- 
+2.43.0
+

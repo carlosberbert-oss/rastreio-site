@@ -249,6 +249,12 @@
   }
   .onfleet-addr svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; color: var(--onfleet); }
 
+  /* Paradas restantes até a entrega (embaixo do status) */
+  .status-sub { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--accent);
+    display: inline-flex; align-items: center; gap: 6px; }
+  .status-sub::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); flex-shrink: 0; }
+
   /* Motivo da falha (entrega não concluída) */
   .falha-box { display: flex; gap: 10px; align-items: flex-start; margin-top: 16px;
     padding: 14px 16px; background: rgba(214,69,69,0.07);
@@ -400,6 +406,7 @@
       <div class="current-status">
         <div class="lbl">Status atual</div>
         <div class="txt" id="resStatus">—</div>
+        <div class="status-sub" id="resParadas" style="display:none;"></div>
       </div>
 
       <!-- Motivo da falha (só para entregas não concluídas) -->
@@ -615,6 +622,21 @@
     // Onfleet manda a cor pronta (statusCor); SSW usa heurística por texto
     const corStatus = (ehOnfleet && data.statusCor) ? data.statusCor : classeDoStatus(statusTxt, data.carrier);
     statusEl.className = "txt " + corStatus;
+
+    // Paradas antes da entrega (só Onfleet, quando em rota)
+    const paradasEl = document.getElementById("resParadas");
+    const pa = ehOnfleet ? data.paradasAntes : null;
+    if (pa === null || pa === undefined) {
+      paradasEl.style.display = "none";
+    } else if (pa <= 0) {
+      paradasEl.textContent = "Sua entrega é a próxima parada";
+      paradasEl.style.display = "";
+    } else {
+      paradasEl.textContent = pa === 1
+        ? "Falta 1 parada até a sua entrega"
+        : `Faltam ${pa} paradas até a sua entrega`;
+      paradasEl.style.display = "";
+    }
 
     // Motivo da falha (só entregas Onfleet não concluídas)
     const falhaBox = document.getElementById("falhaBox");

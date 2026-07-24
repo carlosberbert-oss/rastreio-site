@@ -1,14 +1,15 @@
 /**
- * Netlify Function — Proxy SSW + Onfleet
+ * Netlify Function — Proxy SSW + Onfleet + Jamef
  *
  * Modos:
- *   ?carrier=AUTO   → tenta FITLOG → MIRA → ONFLEET (padrão)
+ *   ?carrier=AUTO   → tenta FITLOG → MIRA → JAMEF → ONFLEET (padrão)
  *   ?carrier=FITLOG → força Fitlog (usa &nf=)
  *   ?carrier=MIRA   → força Mira   (usa &nf=)
+ *   ?carrier=JAMEF  → força Jamef  (usa &nf=)
  *   ?carrier=ONFLEET→ força Onfleet (usa &pedido=)
  *
  * Detecção inteligente no AUTO:
- *   - Input numérico puro → tenta FITLOG → MIRA → (se falhar) ONFLEET
+ *   - Input numérico puro → tenta FITLOG → MIRA → JAMEF → (se falhar) ONFLEET
  *   - Input com "SAL-ORD-" ou não-numérico → pula direto para ONFLEET
  */
 
@@ -17,6 +18,16 @@ const SENHA_FITLOG = process.env.SENHA_FITLOG || "0104";
 const SENHA_MIRA   = process.env.SENHA_MIRA   || "";
 // ONFLEET_API_KEY é lida em runtime (process.env) dentro das funções,
 // porque constantes de topo podem ser avaliadas antes do Netlify injetar as env vars.
+
+// ─── Jamef (API própria: login JWT + consulta) ───────────────────────────────
+// Credenciais e host lidos em runtime (process.env) dentro das funções — nunca
+// hardcoded. Configure no painel do Netlify:
+//   JAMEF_USER            → usuário do portal Jamef (ex.: fulano@empresa.com)
+//   JAMEF_PASS            → senha da API Jamef
+//   JAMEF_CNPJ_REMETENTE  → CNPJ da Luuna (emissor da NF). Default: mesmo CNPJ do SSW.
+//   JAMEF_HOST            → base da API. Default produção; use
+//                           https://api-qa.jamef.com.br para homologação/QA.
+const JAMEF_HOST_DEFAULT = "https://api.jamef.com.br";
 
 const URL_RESULT    = "https://ssw.inf.br/2/resultSSW";
 const URL_DETALHADO = "https://ssw.inf.br/2/SSWDetalhado";
@@ -126,7 +137,7 @@ exports.handler = async (event) => {
         return resp(200, corsHeaders, r);
       }
 
-      // Numérico → tenta SSW (Fitlog → Mira) e só depois Onfleet
+      // Numérico → tenta SSW (Fitlog → Mira) → Jamef e só depois Onfleet
       const nf = inputBruto.replace(/\D/g, "");
       const ordemSSW = ["FITLOG", "MIRA"];
 
@@ -136,6 +147,12 @@ exports.handler = async (event) => {
           if (r && r.ok) return resp(200, corsHeaders, r);
         } catch (_) { /* continua */ }
       }
+
+      // Jamef (API própria) antes da varredura da Onfleet
+      try {
+        const rJamef = await consultarJamef(nf);
+        if (rJamef && rJamef.ok) return resp(200, corsHeaders, rJamef);
+      } catch (_) { /* continua */ }
 
       // Última tentativa: Onfleet com o número puro (raro, mas possível)
       const rOnfleet = await consultarOnfleet(nf);
@@ -152,6 +169,11 @@ exports.handler = async (event) => {
     // ─── Modo explícito ──────────────────────────────────────────────────────
     if (carrierParam === "ONFLEET") {
       const r = await consultarOnfleet(inputBruto);
+      return resp(200, corsHeaders, r);
+    }
+
+    if (carrierParam === "JAMEF") {
+      const r = await consultarJamef(inputBruto.replace(/\D/g, ""));
       return resp(200, corsHeaders, r);
     }
 
@@ -465,6 +487,146 @@ async function obterWorkersBR() {
   } catch (_) {
     return new Set();
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  JAMEF (API própria — login JWT + consulta de rastreamento)
+// ═══════════════════════════════════════════════════════════════
+
+function jamefHost() {
+  return (process.env.JAMEF_HOST || JAMEF_HOST_DEFAULT).replace(/\/+$/, "");
+}
+
+// Cache do token JWT entre invocações "quentes" da Lambda (o container é
+// reaproveitado). O token vale ~1h (expiresIn); renovamos com 60s de folga.
+let _jamefToken = { valor: "", expiraEm: 0 };
+
+async function jamefLogin() {
+  const usuario = process.env.JAMEF_USER || "";
+  const senha   = process.env.JAMEF_PASS || "";
+  if (!usuario || !senha) return "";
+
+  const agora = Date.now();
+  if (_jamefToken.valor && _jamefToken.expiraEm > agora + 60000) {
+    return _jamefToken.valor;
+  }
+
+  const r = await fetch(`${jamefHost()}/auth/v1/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ username: usuario, password: senha }),
+  });
+  if (!r.ok) return "";
+
+  const data  = await r.json().catch(() => null);
+  const token = data?.dado?.[0]?.accessToken || "";
+  const ttl   = Number(data?.dado?.[0]?.expiresIn) || 3600;
+  if (token) _jamefToken = { valor: token, expiraEm: agora + ttl * 1000 };
+  return token;
+}
+
+async function consultarJamef(nf) {
+  if (!process.env.JAMEF_USER || !process.env.JAMEF_PASS) {
+    return { ok: false, erro: "Credenciais Jamef não configuradas.", nf, carrier: "JAMEF" };
+  }
+
+  const token = await jamefLogin();
+  if (!token) return { ok: false, erro: "Falha na autenticação Jamef", nf, carrier: "JAMEF" };
+
+  // Consulta por NF-e emitida pela Luuna (documentoRemetente = CNPJ da Luuna).
+  const cnpjRemetente = (process.env.JAMEF_CNPJ_REMETENTE || CNPJ).replace(/\D/g, "");
+  const qs = new URLSearchParams({
+    documentoRemetente: cnpjRemetente,
+    numeroNotaFiscal:   nf,
+  });
+
+  const r = await fetch(`${jamefHost()}/consulta/v1/rastreamento?${qs.toString()}`, {
+    headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" },
+  });
+
+  const data = await r.json().catch(() => null);
+  if (!r.ok || !data) {
+    const msg = data?.mensagem || `Jamef HTTP ${r.status}`;
+    return { ok: false, erro: msg, nf, carrier: "JAMEF" };
+  }
+
+  const rast = extrairRastreamentoJamef(data, nf);
+  if (!rast) {
+    return { ok: false, erro: data.mensagem || "NF não encontrada na Jamef", nf, carrier: "JAMEF" };
+  }
+
+  return montarRespostaJamef(rast, nf);
+}
+
+// Percorre dado[].rastreamento[] e devolve o embarque cuja NF bate com a buscada
+// (ou o primeiro, se não houver correspondência explícita).
+function extrairRastreamentoJamef(data, nf) {
+  const dado  = Array.isArray(data?.dado) ? data.dado : [];
+  const todos = [];
+  for (const d of dado) {
+    for (const r of (d?.rastreamento || [])) todos.push(r);
+  }
+  if (!todos.length) return null;
+
+  const nfNorm = String(parseInt(nf, 10));
+  const match = todos.find((r) => {
+    const n = r?.notaFiscal?.numero || "";
+    return n === nf || String(parseInt(n, 10)) === nfNorm;
+  });
+  return match || todos[0];
+}
+
+function montarRespostaJamef(rast, nf) {
+  const eventos = (rast.eventosRastreio || [])
+    .map((ev) => {
+      const { data, hora, dataHora } = fmtDataHoraJamef(ev.data);
+      const lo = ev.localOrigem || {};
+      const unidade = [lo.cidade, lo.uf].filter(Boolean).join("/");
+      return {
+        data, hora, dataHora,
+        unidade,
+        filial: "",
+        situacao: String(ev.status || "").trim(),
+        descricao: "",
+        _ts: Date.parse(ev.data) || 0,
+      };
+    })
+    .sort((a, b) => a._ts - b._ts);  // mais antigo → mais recente (igual ao SSW)
+  eventos.forEach((e) => delete e._ts);
+
+  const statusAtual = eventos.length
+    ? eventos[eventos.length - 1]
+    : { dataHora: "", unidade: "", situacao: "SEM STATUS", descricao: "" };
+
+  const frete = rast.frete || {};
+
+  return {
+    ok: true, nf, carrier: "JAMEF",
+    remetente:      rast.remetente?.nome    || "",
+    destinatario:   rast.destinatario?.nome || "",
+    previsao:       fmtDataJamef(frete.previsaoEntrega),
+    numeroFiscal:   rast.notaFiscal?.numero || nf,
+    comprovanteUrl: frete.urlComprovanteEntrega || "",
+    eventos,
+    statusAtual,
+  };
+}
+
+// "2024-05-13T22:53:00" → { data:"13/05/2024", hora:"22:53", dataHora:"13/05/2024 22:53" }
+// A data vem sem offset de fuso; formatamos direto da string (sem conversão de TZ).
+function fmtDataHoraJamef(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return { data: "", hora: "", dataHora: "" };
+  const data = `${m[3]}/${m[2]}/${m[1]}`;
+  const hora = m[4] ? `${m[4]}:${m[5]}` : "";
+  return { data, hora, dataHora: hora ? `${data} ${hora}` : data };
+}
+
+// "2024-04-05" → "05/04/2024"
+function fmtDataJamef(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || "");
 }
 
 

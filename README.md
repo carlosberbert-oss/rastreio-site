@@ -35,6 +35,18 @@ Pra deixar mais seguro, no painel do Netlify:
 | `SENHA_FITLOG` | `0104` |
 | `SENHA_MIRA` | *(deixar vazio)* |
 
+### Jamef (API própria — obrigatório login)
+
+A Jamef exige autenticação. Configure **1 credencial no servidor** (os usuários
+do site nunca fazem login):
+
+| Variável | Valor |
+|----------|-------|
+| `JAMEF_USER` | usuário/e-mail do portal Jamef |
+| `JAMEF_PASS` | senha da API Jamef |
+| `JAMEF_CNPJ_REMETENTE` | *(opcional)* CNPJ emissor da NF. Default: mesmo do `CNPJ` |
+| `JAMEF_HOST` | *(opcional)* `https://api-qa.jamef.com.br` para testar em homologação. Default: produção |
+
 Depois faça um novo deploy pra pegar as variáveis.
 
 ## 🧪 Testar localmente (opcional)
@@ -67,9 +79,16 @@ rastreio-site/
 5. Parser extrai o status do HTML do SSW
 6. Devolve JSON pro front
 
-## ➕ Adicionar Jamef depois
+## 🚚 Jamef (integrada)
 
-Atualmente só Fitlog e Mira (via SSW). Pra adicionar Jamef:
-- Precisa armazenar cookies de sessão (Lambda é stateless, não persiste)
-- Opções: usar Redis (Upstash grátis), planilha do Google, ou hardcode token
-- Avise quando quiser fazer
+A Jamef usa API própria (não é SSW). O fluxo é:
+1. `POST /auth/v1/login` com `{ username, password }` → devolve um token JWT
+   (`dado[0].accessToken`, validade `expiresIn` ≈ 1h — o token é cacheado entre
+   invocações "quentes" da Function)
+2. `GET /consulta/v1/rastreamento?documentoRemetente=<CNPJ>&numeroNotaFiscal=<NF>`
+   com header `Authorization: Bearer <token>`
+3. Parser extrai eventos (`eventosRastreio`), previsão de entrega e o link do
+   comprovante (`frete.urlComprovanteEntrega`)
+
+As credenciais ficam **só** em variáveis de ambiente (ver seção acima) — nunca
+no código nem no navegador.

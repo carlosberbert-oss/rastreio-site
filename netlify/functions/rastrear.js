@@ -552,27 +552,11 @@ async function consultarJamef(nf) {
   }
 
   const rast = extrairRastreamentoJamef(data, nf);
-    const rast = extrairRastreamentoJamef(data, nf);
   if (!rast) {
     return { ok: false, erro: data.mensagem || "NF não encontrada na Jamef", nf, carrier: "JAMEF" };
   }
 
-  // Comprovante: chega por webhook (jamef-webhook.js) e fica no Blobs,
-  // indexado pelo número da NF. Se ainda não chegou, vem "" e o botão some.
-  const comprovanteUrl = await lerComprovanteJamef(nf);
-  return montarRespostaJamef(rast, nf, comprovanteUrl);
-}
-
-// Lê o link do comprovante guardado pelo webhook, pelo número da NF.
-async function lerComprovanteJamef(nf) {
-  try {
-    const { getStore } = await import("@netlify/blobs");
-    const store = getStore("jamef-comprovantes");
-    const rec = await store.get(String(parseInt(nf, 10)), { type: "json" });
-    return rec?.url || "";
-  } catch {
-    return "";
-  }
+  return montarRespostaJamef(rast, nf);
 }
 
 // Percorre dado[].rastreamento[] e devolve o embarque cuja NF bate com a buscada
@@ -593,7 +577,7 @@ function extrairRastreamentoJamef(data, nf) {
   return match || todos[0];
 }
 
-function montarRespostaJamef(rast, nf, comprovanteUrl = "") {
+function montarRespostaJamef(rast, nf) {
   const eventos = (rast.eventosRastreio || [])
     .map((ev) => {
       const { data, hora, dataHora } = fmtDataHoraJamef(ev.data);
@@ -623,7 +607,7 @@ function montarRespostaJamef(rast, nf, comprovanteUrl = "") {
     destinatario:   rast.destinatario?.nome || "",
     previsao:       fmtDataJamef(frete.previsaoEntrega),
     numeroFiscal:   rast.notaFiscal?.numero || nf,
-    comprovanteUrl: comprovanteUrl || "",
+    comprovanteUrl: frete.urlComprovanteEntrega || "",
     eventos,
     statusAtual,
   };

@@ -593,7 +593,7 @@ function extrairRastreamentoJamef(data, nf) {
   return match || todos[0];
 }
 
-function montarRespostaJamef(rast, nf) {
+function montarRespostaJamef(rast, nf, comprovanteUrl = "") {
   const eventos = (rast.eventosRastreio || [])
     .map((ev) => {
       const { data, hora, dataHora } = fmtDataHoraJamef(ev.data);
@@ -623,7 +623,7 @@ function montarRespostaJamef(rast, nf) {
     destinatario:   rast.destinatario?.nome || "",
     previsao:       fmtDataJamef(frete.previsaoEntrega),
     numeroFiscal:   rast.notaFiscal?.numero || nf,
-    comprovanteUrl: frete.urlComprovanteEntrega || "",
+    comprovanteUrl: comprovanteUrl || "",
     eventos,
     statusAtual,
   };

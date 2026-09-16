@@ -508,10 +508,22 @@
 </div>
 
 <script>
+  /* ── Deep link: ?nf= / ?pedido= / ?q= já abre direto no rastreio ── */
+  const _deepLink = (() => {
+    const p = new URLSearchParams(location.search);
+    return (p.get("nf") || p.get("pedido") || p.get("q") || p.get("codigo") || "").trim();
+  })();
+
   /* ── Intro ── */
   (function intro(){
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce){ document.body.classList.add("revealed"); return; }
+    // Com deep link (link já traz a NF/pedido) OU movimento reduzido: revela na hora, sem intro.
+    if (reduce || _deepLink){
+      document.body.classList.add("revealed");
+      const el = document.getElementById("intro");
+      if (el){ el.classList.add("done"); if (_deepLink) el.style.display = "none"; }
+      return;
+    }
     window.addEventListener("load", () => {
       setTimeout(() => {
         document.body.classList.add("revealed");
@@ -529,6 +541,12 @@
   document.getElementById("inputNF").addEventListener("keydown", (e) => {
     if (e.key === "Enter") rastrear();
   });
+
+  /* Se o link já veio com NF/pedido, preenche o campo e busca sozinho */
+  if (_deepLink) {
+    document.getElementById("inputNF").value = _deepLink;
+    rastrear();
+  }
 
   // Detecta se o input é formato Onfleet (contém letras ou traços não-numéricos)
   function detectarTipo(valor) {

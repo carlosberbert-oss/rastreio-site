@@ -605,6 +605,9 @@
 
       mostrarResultado(data);
 
+      // Reflete a busca na URL (sem recarregar), pra copiar o link pronto pro cliente.
+      history.replaceState(null, "", `${location.pathname}?${param}`);
+
     } catch (err) {
       document.getElementById("loading").classList.remove("visible");
       document.getElementById("btnRastrear").disabled = false;

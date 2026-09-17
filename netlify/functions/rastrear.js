@@ -149,27 +149,25 @@ exports.handler = async (event) => {
         }
       } catch (_) { /* segue pra transportadora */ }
 
-      // Etapa 2 — TRANSPORTADORA (pedido já saiu do armazém): Fitlog → Mira → Jamef → Onfleet.
-      const ordemSSW = ["FITLOG", "MIRA"];
-      for (const carrier of ordemSSW) {
-        try {
-          const r = await consultarCarrier(carrier, nf);
-          if (r && r.ok) return resp(200, corsHeaders, r);
-        } catch (_) { /* continua */ }
-      }
+      // Etapa 2 — TRANSPORTADORA (pedido já saiu do armazém).
+      // Consulta Fitlog, Mira e Jamef EM PARALELO e usa a que achar. Isso elimina o
+      // overhead sequencial que derrubava a Jamef (ela ficava por último na fila) e
+      // funciona igual pra todas — sem depender da Platinum dizer qual é a transportadora.
+      const [pFit, pMira, pJamef] = await Promise.allSettled([
+        consultarCarrier("FITLOG", nf),
+        consultarCarrier("MIRA", nf),
+        consultarJamef(nf),
+      ]);
+      const val = (p) => (p.status === "fulfilled" && p.value && p.value.ok) ? p.value : null;
+      const achou = val(pFit) || val(pMira) || val(pJamef);
+      if (achou) return resp(200, corsHeaders, achou);
 
-      // Jamef (API própria) antes da varredura da Onfleet
-      try {
-        const rJamef = await consultarJamef(nf);
-        if (rJamef && rJamef.ok) return resp(200, corsHeaders, rJamef);
-      } catch (_) { /* continua */ }
-
-      // Última tentativa: Onfleet com o número puro (raro, mas possível)
-      const rOnfleet = await consultarOnfleet(nf);
+      // Onfleet por último (raro para NF numérica pura)
+      let rOnfleet = null;
+      try { rOnfleet = await consultarOnfleet(nf); } catch (_) { /* ignora */ }
       if (rOnfleet && rOnfleet.ok) return resp(200, corsHeaders, rOnfleet);
 
-      // Já saiu do armazém mas a transportadora ainda não tem dados (ex.: acabou de sair):
-      // mostra a Platinum (que já tem o evento de saída) em vez de "não encontrado".
+      // Nenhuma achou (ex.: acabou de sair, transportadora ainda sem dados) → mostra Platinum.
       if (platinum && platinum.ok) return resp(200, corsHeaders, platinum);
 
       return resp(200, corsHeaders, {

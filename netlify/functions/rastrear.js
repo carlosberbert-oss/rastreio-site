@@ -137,10 +137,20 @@ exports.handler = async (event) => {
         return resp(200, corsHeaders, r);
       }
 
-      // Numérico → tenta SSW (Fitlog → Mira) → Jamef e só depois Onfleet
       const nf = inputBruto.replace(/\D/g, "");
-      const ordemSSW = ["FITLOG", "MIRA"];
 
+      // Etapa 1 — ARMAZÉM (Platinum/TPL). Todo pedido passa por aqui primeiro.
+      // Enquanto não sair do armazém ("ENTREGUE A TRANSPORTADORA"), mostra o status do armazém.
+      let platinum = null;
+      try {
+        platinum = await consultarPlatinum(nf);
+        if (platinum && platinum.ok && !platinum.saiuDoArmazem) {
+          return resp(200, corsHeaders, platinum);
+        }
+      } catch (_) { /* segue pra transportadora */ }
+
+      // Etapa 2 — TRANSPORTADORA (pedido já saiu do armazém): Fitlog → Mira → Jamef → Onfleet.
+      const ordemSSW = ["FITLOG", "MIRA"];
       for (const carrier of ordemSSW) {
         try {
           const r = await consultarCarrier(carrier, nf);
@@ -157,6 +167,10 @@ exports.handler = async (event) => {
       // Última tentativa: Onfleet com o número puro (raro, mas possível)
       const rOnfleet = await consultarOnfleet(nf);
       if (rOnfleet && rOnfleet.ok) return resp(200, corsHeaders, rOnfleet);
+
+      // Já saiu do armazém mas a transportadora ainda não tem dados (ex.: acabou de sair):
+      // mostra a Platinum (que já tem o evento de saída) em vez de "não encontrado".
+      if (platinum && platinum.ok) return resp(200, corsHeaders, platinum);
 
       return resp(200, corsHeaders, {
         ok: false,
@@ -177,6 +191,14 @@ exports.handler = async (event) => {
       return resp(200, corsHeaders, r);
     }
 
+    if (carrierParam === "PLATINUM") {
+      const r = await consultarPlatinum(inputBruto.replace(/\D/g, ""));
+      return resp(200, corsHeaders, r || {
+        ok: false, erro: "Pedido não encontrado na Platinum",
+        nf: inputBruto, carrier: "PLATINUM"
+      });
+    }
+
     if (!["FITLOG", "MIRA"].includes(carrierParam)) {
       return resp(400, corsHeaders, { ok: false, erro: "Transportadora inválida" });
     }
@@ -189,6 +211,90 @@ exports.handler = async (event) => {
     return resp(500, corsHeaders, { ok: false, erro: "Exceção: " + err.message });
   }
 };
+
+// ═══════════════════════════════════════════════════════════════
+//  PLATINUM / TPL OMS  (etapa de ARMAZÉM — antes da transportadora)
+//  Página pública: https://oms.tpl.com.br/tracking/<cliente>/-/Zecore <NF>-<sufixo>
+// ═══════════════════════════════════════════════════════════════
+const PLATINUM_CLIENTE = process.env.PLATINUM_CLIENTE || "81";  // conta da Luuna na TPL
+const PLATINUM_SUFIXO  = process.env.PLATINUM_SUFIXO  || "1";   // o "-1" de "Zecore <NF>-1"
+
+// Evento que marca a saída do armazém → hora de pular pra transportadora.
+const PLATINUM_HANDOFF = /ENTREGUE\s+[ÀA]\s+TRANSPORTADORA/i;
+
+function decodeEntidades(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+async function consultarPlatinum(nf) {
+  const pedido = `Zecore ${nf}-${PLATINUM_SUFIXO}`;
+  const url = `https://oms.tpl.com.br/tracking/${PLATINUM_CLIENTE}/-/${encodeURIComponent(pedido)}`;
+
+  let html;
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (rastreio-luuna)" } });
+    if (!r.ok) return null;
+    html = await r.text();
+  } catch { return null; }
+
+  // Histórico: cada <li class="timeline-item"> traz a data em <strong> e a descrição
+  // no bloco d-flex → <small>. A página lista do MAIS NOVO pro mais antigo.
+  const itens = [];
+  const reItem = /<li class="timeline-item[^"]*">([\s\S]*?)<\/li>/g;
+  let li;
+  while ((li = reItem.exec(html)) !== null) {
+    const bloco = li[1];
+    const mData = bloco.match(/<strong>\s*([^<]+?)\s*<\/strong>/i);
+    const mDesc = bloco.match(/<div class="d-flex[^"]*">[\s\S]*?<small>\s*([^<]+?)\s*<\/small>/i);
+    if (!mData || !mDesc) continue;
+    const dataHora  = decodeEntidades(mData[1]);
+    const descricao = decodeEntidades(mDesc[1]);
+    const [dataP, horaP] = dataHora.split(/\s+/);
+    itens.push({ dataHora, data: dataP || "", hora: horaP || "", descricao });
+  }
+  if (!itens.length) return null;   // pedido não encontrado na Platinum
+
+  const saiuDoArmazem = itens.some((e) => PLATINUM_HANDOFF.test(e.descricao));
+
+  // Transportadora (nome no alt da logo t<N>.png), útil quando já saiu do armazém.
+  let transportadora = "";
+  const mAlt = html.match(/<img[^>]*src="[^"]*\/t\d+\.png"[^>]*alt="([^"]*)"/i);
+  if (mAlt) transportadora = decodeEntidades(mAlt[1]);
+
+  // Estimativa de entrega
+  let estimativa = "";
+  const mEst = html.match(/Estimativa de entrega:[\s\S]*?<span class="h4"[^>]*>\s*([\s\S]*?)<\/span>/i);
+  if (mEst) estimativa = decodeEntidades(mEst[1]);
+
+  // O front-end espera eventos do MAIS ANTIGO pro mais novo (ele reverte ao exibir).
+  const eventos = itens.slice().reverse().map((e) => ({
+    data: e.data, hora: e.hora, dataHora: e.dataHora,
+    unidade: "", filial: "",
+    situacao: e.descricao, descricao: "",
+  }));
+
+  const maisRecente = itens[0];
+  const statusAtual = {
+    dataHora: maisRecente.dataHora, unidade: "",
+    situacao: maisRecente.descricao, descricao: "",
+  };
+
+  return {
+    ok: true,
+    nf,
+    carrier: "PLATINUM",
+    remetente: "", destinatario: "",
+    previsao: estimativa,
+    numeroFiscal: nf,
+    transportadora,
+    saiuDoArmazem,
+    eventos,
+    statusAtual,
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  ONFLEET

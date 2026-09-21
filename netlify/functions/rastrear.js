@@ -160,7 +160,15 @@ exports.handler = async (event) => {
       ]);
       const val = (p) => (p.status === "fulfilled" && p.value && p.value.ok) ? p.value : null;
       const achou = val(pFit) || val(pMira) || val(pJamef);
-      if (achou) return resp(200, corsHeaders, achou);
+      if (achou) {
+        // Timeline única: mantém o histórico do ARMAZÉM (Platinum) e emenda o da
+        // TRANSPORTADORA em seguida — de "separação" até "entregue", num fio só.
+        // O status atual continua sendo o da transportadora (evento mais recente).
+        if (platinum && platinum.ok && Array.isArray(platinum.eventos) && platinum.eventos.length) {
+          achou.eventos = [...platinum.eventos, ...(achou.eventos || [])];
+        }
+        return resp(200, corsHeaders, achou);
+      }
 
       // Onfleet por último (raro para NF numérica pura)
       let rOnfleet = null;
@@ -270,13 +278,13 @@ async function consultarPlatinum(nf) {
   // O front-end espera eventos do MAIS ANTIGO pro mais novo (ele reverte ao exibir).
   const eventos = itens.slice().reverse().map((e) => ({
     data: e.data, hora: e.hora, dataHora: e.dataHora,
-    unidade: "", filial: "",
+    unidade: "Armazém", filial: "",
     situacao: e.descricao, descricao: "",
   }));
 
   const maisRecente = itens[0];
   const statusAtual = {
-    dataHora: maisRecente.dataHora, unidade: "",
+    dataHora: maisRecente.dataHora, unidade: "Armazém",
     situacao: maisRecente.descricao, descricao: "",
   };
 

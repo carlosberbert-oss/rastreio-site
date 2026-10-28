@@ -881,6 +881,25 @@ function _rteAcharNoTopo(obj, regex) {
   return achado;
 }
 
+function _rteEhData(v) {
+  return typeof v === "string" && /^(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})/.test(v.trim());
+}
+
+// Igual ao _rteAcharNoTopo, mas só devolve valores que sejam data
+function _rteAcharData(obj, regex) {
+  let achado = "";
+  const visitar = (v, prof) => {
+    if (achado || !v || prof > 4 || typeof v !== "object") return;
+    if (Array.isArray(v)) { visitar(v[0], prof + 1); return; }
+    for (const [k, x] of Object.entries(v)) {
+      if (regex.test(k) && _rteEhData(x)) { achado = x; return; }
+    }
+    Object.values(v).forEach((y) => visitar(y, prof + 1));
+  };
+  visitar(obj, 0);
+  return achado;
+}
+
 function _rteNome(obj, regexParte) {
   let achado = "";
   const visitar = (v, prof) => {
@@ -932,7 +951,9 @@ function montarRespostaRodonaves(data, nf) {
     return { ok: false, erro: "Rodonaves respondeu, mas sem eventos de rastreio", nf, carrier: "RODONAVES" };
   }
 
-  const prev = _rteAcharNoTopo(data, /forecast|previs|expected|estimat|prazo|deadline/i);
+  // Só aceita DATA aqui: a resposta também traz o prazo em dias (ex.: 8),
+  // e esse número não pode aparecer como "data de entrega"
+  const prev = _rteAcharData(data, /forecast|previs|expected|estimat|prazo|deadline/i);
   const comp = _rteAcharNoTopo(data, /proof|comprov|receipt|canhoto/i);
 
   return {

@@ -153,13 +153,14 @@ exports.handler = async (event) => {
       // Consulta Fitlog, Mira e Jamef EM PARALELO e usa a que achar. Isso elimina o
       // overhead sequencial que derrubava a Jamef (ela ficava por último na fila) e
       // funciona igual pra todas — sem depender da Platinum dizer qual é a transportadora.
-      const [pFit, pMira, pJamef] = await Promise.allSettled([
+      const [pFit, pMira, pJamef, pRte] = await Promise.allSettled([
         consultarCarrier("FITLOG", nf),
         consultarCarrier("MIRA", nf),
         consultarJamef(nf),
+        consultarRodonaves(nf),
       ]);
       const val = (p) => (p.status === "fulfilled" && p.value && p.value.ok) ? p.value : null;
-      const achou = val(pFit) || val(pMira) || val(pJamef);
+      const achou = val(pFit) || val(pMira) || val(pJamef) || val(pRte);
       if (achou) {
         // Timeline única: mantém o histórico do ARMAZÉM (Platinum) e emenda o da
         // TRANSPORTADORA em seguida — de "separação" até "entregue", num fio só.
@@ -194,6 +195,11 @@ exports.handler = async (event) => {
 
     if (carrierParam === "JAMEF") {
       const r = await consultarJamef(inputBruto.replace(/\D/g, ""));
+      return resp(200, corsHeaders, r);
+    }
+
+    if (carrierParam === "RODONAVES" || carrierParam === "RTE") {
+      const r = await consultarRodonaves(inputBruto.replace(/\D/g, ""));
       return resp(200, corsHeaders, r);
     }
 
@@ -739,6 +745,229 @@ function fmtDataHoraJamef(iso) {
 function fmtDataJamef(iso) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || "");
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  RODONAVES (RTE) — API oficial de rastreio
+//  Doc: dev.rodonaves.com.br → Rastreio
+//   1. POST https://tracking-apigateway.rte.com.br/token
+//      (form: auth_type=DEV, grant_type=password, username, password)
+//   2. GET  https://tracking-apigateway.rte.com.br/api/v1/tracking
+//      ?TaxIdRegistration=<CNPJ>&InvoiceNumber=<NF>
+//  É um gateway SEPARADO do da malha (etiqueta): token próprio, mas o
+//  mesmo usuário e senha.
+//  Comportamentos conhecidos: credencial errada → 400 (não 401);
+//  NF não encontrada → 204 sem corpo.
+//
+//  Variáveis no Netlify: RTE_USER, RTE_PASSWORD
+//  (opcional) RTE_CNPJ — padrão: o mesmo CNPJ da Luuna
+//  (opcional) RTE_LOG_RAW=0 — desliga o registro da resposta crua no log
+// ═══════════════════════════════════════════════════════════════
+
+const RTE_TRACKING_BASE = "https://tracking-apigateway.rte.com.br";
+let _rteToken = { valor: "", expiraEm: 0 };
+
+function rteCredenciais() {
+  return {
+    usuario: process.env.RTE_USER || "",
+    senha:   process.env.RTE_PASSWORD || process.env.RTE_PASS || "",
+  };
+}
+
+async function rteLogin(forcar) {
+  const { usuario, senha } = rteCredenciais();
+  if (!usuario || !senha) return "";
+
+  const agora = Date.now();
+  if (!forcar && _rteToken.valor && _rteToken.expiraEm > agora + 60000) return _rteToken.valor;
+
+  const r = await fetch(`${RTE_TRACKING_BASE}/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+    body: new URLSearchParams({
+      auth_type: "DEV", grant_type: "password", username: usuario, password: senha,
+    }).toString(),
+  });
+  if (!r.ok) {
+    console.log(`[RTE] token HTTP ${r.status}`);   // 400 = usuário/senha errados
+    return "";
+  }
+  const data  = await r.json().catch(() => null);
+  const token = data?.access_token || "";
+  const ttl   = Number(data?.expires_in) || 3600;
+  if (token) _rteToken = { valor: token, expiraEm: agora + ttl * 1000 };
+  return token;
+}
+
+async function consultarRodonaves(nf) {
+  const base = { nf, carrier: "RODONAVES" };
+  const { usuario, senha } = rteCredenciais();
+  if (!usuario || !senha) return { ok: false, erro: "Credenciais Rodonaves não configuradas.", ...base };
+
+  const cnpj = (process.env.RTE_CNPJ || CNPJ).replace(/\D/g, "");
+  const url  = `${RTE_TRACKING_BASE}/api/v1/tracking?` +
+               new URLSearchParams({ TaxIdRegistration: cnpj, InvoiceNumber: nf }).toString();
+
+  let token = await rteLogin(false);
+  if (!token) return { ok: false, erro: "Falha na autenticação Rodonaves", ...base };
+
+  let r = await fetch(url, { headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" } });
+  if (r.status === 401) {                       // token vencido no meio do caminho
+    token = await rteLogin(true);
+    if (!token) return { ok: false, erro: "Falha na autenticação Rodonaves", ...base };
+    r = await fetch(url, { headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" } });
+  }
+
+  if (r.status === 204) return { ok: false, erro: "NF não encontrada na Rodonaves", ...base };
+
+  const texto = await r.text();
+  if (process.env.RTE_LOG_RAW !== "0") {
+    // Fica só no log da função no Netlify (privado), pra conferir os campos
+    console.log(`[RTE] NF ${nf} | HTTP ${r.status} | ${texto.slice(0, 3000)}`);
+  }
+  if (!r.ok) return { ok: false, erro: `Rodonaves HTTP ${r.status}`, ...base };
+
+  let data = null;
+  try { data = JSON.parse(texto); } catch (_) { /* resposta não-JSON */ }
+  if (!data) return { ok: false, erro: "Resposta inválida da Rodonaves", ...base };
+
+  return montarRespostaRodonaves(data, nf);
+}
+
+// ── Leitura tolerante: a resposta é procurada pelos nomes de campo mais
+//    prováveis, em qualquer nível, em vez de um caminho fixo. ──
+
+function _rteAcharArrayEventos(obj) {
+  let melhor = null;
+  const visitar = (v, prof) => {
+    if (!v || prof > 6) return;
+    if (Array.isArray(v)) {
+      const objs = v.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+      const pareceEvento = objs.length && objs.some((x) =>
+        Object.keys(x).some((k) => /date|data|hora/i.test(k)) &&
+        Object.keys(x).some((k) => /desc|ocorr|occurr|status|situa|event|name|nome/i.test(k)));
+      if (pareceEvento && (!melhor || objs.length > melhor.length)) melhor = objs;
+      v.forEach((x) => visitar(x, prof + 1));
+      return;
+    }
+    if (typeof v === "object") Object.values(v).forEach((x) => visitar(x, prof + 1));
+  };
+  visitar(obj, 0);
+  return melhor || [];
+}
+
+function _rteCampo(obj, regex, tipos, ignorar) {
+  if (!obj || typeof obj !== "object") return "";
+  for (const [k, v] of Object.entries(obj)) {
+    if (!regex.test(k)) continue;
+    if (ignorar && ignorar.test(k)) continue;
+    if (v === null || v === undefined || v === "") continue;
+    if (!tipos || tipos.includes(typeof v)) return v;
+  }
+  return "";
+}
+
+function _rteAcharNoTopo(obj, regex) {
+  // procura em até 3 níveis, fora das listas de eventos
+  let achado = "";
+  const visitar = (v, prof) => {
+    if (achado || !v || prof > 3 || Array.isArray(v) || typeof v !== "object") return;
+    const x = _rteCampo(v, regex, ["string", "number"]);
+    if (x !== "") { achado = x; return; }
+    Object.values(v).forEach((y) => visitar(Array.isArray(y) ? y[0] : y, prof + 1));
+  };
+  visitar(Array.isArray(obj) ? obj[0] : obj, 0);
+  return achado;
+}
+
+function _rteNome(obj, regexParte) {
+  let achado = "";
+  const visitar = (v, prof) => {
+    if (achado || !v || prof > 3 || typeof v !== "object") return;
+    if (Array.isArray(v)) { visitar(v[0], prof + 1); return; }
+    for (const [k, x] of Object.entries(v)) {
+      if (!regexParte.test(k)) continue;
+      if (typeof x === "string" && x.trim()) { achado = x.trim(); return; }
+      if (x && typeof x === "object") {
+        const nome = _rteCampo(x, /^(name|nome|razao|corporateName|companyName)/i, ["string"]);
+        if (nome) { achado = nome; return; }
+      }
+    }
+    Object.values(v).forEach((y) => visitar(y, prof + 1));
+  };
+  visitar(obj, 0);
+  return achado;
+}
+
+function montarRespostaRodonaves(data, nf) {
+  const brutos = _rteAcharArrayEventos(data);
+
+  const eventos = brutos.map((ev) => {
+    const quando = _rteCampo(ev, /date|data|hora/i, ["string"]);
+    const { data: d, hora, dataHora } = fmtDataHoraRte(quando);
+    // Chaves de data ("EventDate", "DataOcorrencia"…) ficam de fora: senão a
+    // descrição do evento sairia como a própria data
+    const ehData = /date|data|hora|time/i;
+    const situacao = String(
+      _rteCampo(ev, /^(description|descricao|occurrence|ocorrencia|eventDescription|status|situacao|situation|event|evento|name|nome)/i, ["string"], ehData) ||
+      _rteCampo(ev, /desc|ocorr|occurr|status|situa|event/i, ["string"], ehData) || ""
+    ).trim();
+    const cidade = _rteCampo(ev, /city|cidade|unit|unidade|branch|filial|local/i, ["string"]);
+    const uf     = _rteCampo(ev, /^(uf|state|estado)$/i, ["string"]);
+    return {
+      data: d, hora, dataHora,
+      unidade: [cidade, uf].filter(Boolean).join("/"),
+      filial: "",
+      situacao,
+      descricao: "",
+      _ts: _rteTimestamp(d, hora),
+    };
+  })
+  .filter((e) => e.situacao)
+  .sort((a, b) => a._ts - b._ts);              // mais antigo → mais recente (igual às outras)
+  eventos.forEach((e) => delete e._ts);
+
+  if (!eventos.length) {
+    return { ok: false, erro: "Rodonaves respondeu, mas sem eventos de rastreio", nf, carrier: "RODONAVES" };
+  }
+
+  const prev = _rteAcharNoTopo(data, /forecast|previs|expected|estimat|prazo|deadline/i);
+  const comp = _rteAcharNoTopo(data, /proof|comprov|receipt|canhoto/i);
+
+  return {
+    ok: true, nf, carrier: "RODONAVES",
+    remetente:      _rteNome(data, /sender|remet|shipper/i),
+    destinatario:   _rteNome(data, /recipient|destinat|receiver|consignee/i),
+    previsao:       prev ? fmtDataHoraRte(prev).data : "",
+    numeroFiscal:   nf,
+    comprovanteUrl: /^https?:\/\//i.test(String(comp)) ? comp : "",
+    eventos,
+    statusAtual:    eventos[eventos.length - 1],
+  };
+}
+
+function _rteTimestamp(data, hora) {
+  const m = String(data || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  const h = String(hora || "00:00").match(/^(\d{2}):(\d{2})/) || [0, "00", "00"];
+  return Date.UTC(+m[3], +m[2] - 1, +m[1], +h[1], +h[2]);
+}
+
+// Aceita "2026-10-27T14:30:00", "2026-10-27 14:30" e "27/10/2026 14:30"
+function fmtDataHoraRte(v) {
+  const s = String(v || "");
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (m) {
+    const data = `${m[3]}/${m[2]}/${m[1]}`, hora = m[4] ? `${m[4]}:${m[5]}` : "";
+    return { data, hora, dataHora: hora ? `${data} ${hora}` : data };
+  }
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+  if (m) {
+    const data = `${m[1]}/${m[2]}/${m[3]}`, hora = m[4] ? `${m[4]}:${m[5]}` : "";
+    return { data, hora, dataHora: hora ? `${data} ${hora}` : data };
+  }
+  return { data: s, hora: "", dataHora: s };
 }
 
 

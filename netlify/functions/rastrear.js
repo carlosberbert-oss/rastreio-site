@@ -920,7 +920,11 @@ function _rteNome(obj, regexParte) {
 }
 
 function montarRespostaRodonaves(data, nf) {
-  const brutos = _rteAcharArrayEventos(data);
+  // Formato real da RTE (conferido no log): objeto com Events[] (Date,
+  // Description), SenderDescription, RecipientDescription,
+  // ExpectedDeliveryDays, EmissionDate e NewDateSchedule.
+  const d0 = Array.isArray(data) ? (data[0] || {}) : data;
+  const brutos = (Array.isArray(d0.Events) && d0.Events.length) ? d0.Events : _rteAcharArrayEventos(data);
 
   const eventos = brutos.map((ev) => {
     const quando = _rteCampo(ev, /date|data|hora/i, ["string"]);
@@ -931,7 +935,12 @@ function montarRespostaRodonaves(data, nf) {
     const situacao = String(
       _rteCampo(ev, /^(description|descricao|occurrence|ocorrencia|eventDescription|status|situacao|situation|event|evento|name|nome)/i, ["string"], ehData) ||
       _rteCampo(ev, /desc|ocorr|occurr|status|situa|event/i, ["string"], ehData) || ""
-    ).trim();
+    ).trim()
+      // "…ribeirao preto-sp, com previsão de chegada em 28/10/2026 03:36." é a
+      // chegada na UNIDADE de transferência, não na casa do cliente — ao lado
+      // de "Previsão de entrega" isso confunde, então sai do texto.
+      .replace(/,?\s*com previs[aã]o de chegada em\s+\d{2}\/\d{2}\/\d{4}(\s+\d{2}:\d{2})?\s*\.?/i, ".")
+      .replace(/\.\.+$/, ".");
     const cidade = _rteCampo(ev, /city|cidade|unit|unidade|branch|filial|local/i, ["string"]);
     const uf     = _rteCampo(ev, /^(uf|state|estado)$/i, ["string"]);
     return {
@@ -951,21 +960,48 @@ function montarRespostaRodonaves(data, nf) {
     return { ok: false, erro: "Rodonaves respondeu, mas sem eventos de rastreio", nf, carrier: "RODONAVES" };
   }
 
-  // Só aceita DATA aqui: a resposta também traz o prazo em dias (ex.: 8),
-  // e esse número não pode aparecer como "data de entrega"
-  const prev = _rteAcharData(data, /forecast|previs|expected|estimat|prazo|deadline/i);
+  // Previsão de entrega. A RTE NÃO manda a data pronta: manda o prazo em
+  // dias (ExpectedDeliveryDays) e a data em que recebeu (EmissionDate). O
+  // site deles soma os dois em dias úteis — fazemos a mesma conta.
+  // Se a entrega for reagendada, NewDateSchedule tem a data nova e vale ela.
+  let previsao = "";
+  const novaData = String(d0.NewDateSchedule || "");
+  if (/^\d{4}-/.test(novaData) && !novaData.startsWith("0001")) {
+    previsao = fmtDataHoraRte(novaData).data;
+  } else if (Number(d0.ExpectedDeliveryDays) > 0 && d0.EmissionDate) {
+    previsao = _rteSomarDiasUteis(d0.EmissionDate, Number(d0.ExpectedDeliveryDays));
+  } else {
+    const prev = _rteAcharData(data, /forecast|previs|expected|estimat|prazo|deadline/i);
+    if (prev) previsao = fmtDataHoraRte(prev).data;
+  }
   const comp = _rteAcharNoTopo(data, /proof|comprov|receipt|canhoto/i);
 
   return {
     ok: true, nf, carrier: "RODONAVES",
     remetente:      _rteNome(data, /sender|remet|shipper/i),
     destinatario:   _rteNome(data, /recipient|destinat|receiver|consignee/i),
-    previsao:       prev ? fmtDataHoraRte(prev).data : "",
+    previsao,
     numeroFiscal:   nf,
     comprovanteUrl: /^https?:\/\//i.test(String(comp)) ? comp : "",
     eventos,
     statusAtual:    eventos[eventos.length - 1],
   };
+}
+
+// "2026-10-27T18:56:52-03:00" + 8 dias úteis → "06/11/2026"
+// (pula sábado e domingo — é o mesmo resultado que o site da RTE mostra)
+function _rteSomarDiasUteis(isoInicio, dias) {
+  const m = String(isoInicio).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  let faltam = dias;
+  while (faltam > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) faltam--;
+  }
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
 function _rteTimestamp(data, hora) {

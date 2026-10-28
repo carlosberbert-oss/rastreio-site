@@ -433,7 +433,7 @@
           <div class="v" id="resDataHora">—</div>
         </div>
         <div class="info-tile">
-          <div class="k">Data de entrega</div>
+          <div class="k" id="resPrevisaoLabel">Previsão de entrega</div>
           <div class="v" id="resPrevisao">—</div>
         </div>
         <div class="info-tile full" id="tileRemetente">
@@ -680,6 +680,9 @@
 
     setValue("resDataHora",     last ? last.dataHora : "");
     setValue("resPrevisao",     data.previsao);
+    // Na Onfleet, tarefa concluída traz a data em que aconteceu — não é previsão
+    document.getElementById("resPrevisaoLabel").textContent =
+      (data.carrier === "ONFLEET" && data.concluido) ? "Concluído em" : "Previsão de entrega";
     setValue("resRemetente",    data.remetente);
     setValue("resDestinatario", data.destinatario);
 
